@@ -7,10 +7,8 @@ export default function Compras() {
   const [productosStock, setProductosStock] = useState([]);
   const [cantidad, setCantidad] = useState("");
   const [costeUnidad, setCosteUnidad] = useState("");
-  const [total, setTotal] = useState("");
   const [proveedor, setProveedor] = useState("");
   const [formaPago, setFormaPago] = useState("");
-  const [precioVenta, setPrecioVenta] = useState("");
 
   useEffect(() => {
     const cargarProductos = async () => {
@@ -22,22 +20,22 @@ export default function Compras() {
 
   const guardarCompra = async () => {
     const cantidadNumero = parseInt(cantidad);
+    const costeNumero = parseFloat(costeUnidad);
+    const total = cantidadNumero * costeNumero;
 
-    if (!nombre || isNaN(cantidadNumero) || cantidadNumero <= 0) {
+    if (!nombre || isNaN(cantidadNumero) || cantidadNumero <= 0 || isNaN(costeNumero)) {
       alert("Por favor completá todos los campos correctamente.");
       return;
     }
 
     const nuevaCompra = {
       nombre,
-      costoUnidad: parseFloat(costeUnidad),
+      costoUnidad: costeNumero,
       cantidad: cantidadNumero,
-      total: parseFloat(total),
+      total,
       proveedor,
       formaPago,
-      precioVenta: parseFloat(precioVenta),
     };
-
 
     const { error: comprasError } = await supabase.from("Compras").insert([nuevaCompra]);
 
@@ -63,83 +61,84 @@ export default function Compras() {
     setNombre("");
     setCantidad("");
     setCosteUnidad("");
-    setTotal("");
     setProveedor("");
     setFormaPago("");
-    setPrecioVenta("");
   };
 
+  const totalCalculado = cantidad && costeUnidad ? parseInt(cantidad) * parseFloat(costeUnidad) : 0;
+
   return (
-    <div className="p-4">
-      <Link
-      to="/"
-      className="inline-block mb-4 bg-blue-500 text-white px-4 py-2 rounded"
-    >
-      Volver al menú
-    </Link>
-      <h1 className="text-xl font-bold mb-4">Cargar Compra</h1>
-      <div className="mb-2 w-full">
-        <input
-          list="productos"
-          placeholder="Seleccionar o escribir producto"
-          value={nombre}
-          onChange={(e) => setNombre(e.target.value)}
-          className="border p-2 w-full"
-        />
-        <datalist id="productos">
-          {productosStock.map((prod) => (
-            <option key={prod} value={prod} />
-          ))}
-        </datalist>
+    <div className="min-h-screen flex justify-center bg-gray-100 px-4">
+      <div className="w-1/2 max-w-sm lg:w-1/4 bg-white shadow-xl rounded-2xl p-6 space-y-[16px]">
+          <Link
+            to="/"
+            className="inline-block mb-4 bg-blue-500 text-white px-4 py-2 rounded"
+          >
+            Volver al menú
+          </Link>
+          <h1 className="text-xl font-bold mb-4">Cargar Compra</h1>
+
+          <div className="mb-4 w-full">
+            <input
+              list="productos"
+              placeholder="Seleccionar o escribir producto"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <datalist id="productos">
+              {productosStock.map((prod) => (
+                <option key={prod} value={prod} />
+              ))}
+            </datalist>
+          </div>
+
+          <div className="flex gap-4 mb-4 justify-between">
+            <input
+              type="number"
+              placeholder="Cantidad"
+              value={cantidad}
+              onChange={(e) => setCantidad(e.target.value)}
+              className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <input
+              type="number"
+              placeholder="Coste por unidad"
+              value={costeUnidad}
+              onChange={(e) => setCosteUnidad(e.target.value)}
+              className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+
+          <div className="mb-4">
+            <span className="text-gray-700">Total: </span>
+            <span className="font-semibold">${totalCalculado.toFixed(2)}</span>
+          </div>
+
+          <div className="flex gap-4 mb-4 justify-between">
+            <input
+              type="text"
+              placeholder="Proveedor"
+              value={proveedor}
+              onChange={(e) => setProveedor(e.target.value)}
+              className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <input
+              type="text"
+              placeholder="Forma de pago"
+              value={formaPago}
+              onChange={(e) => setFormaPago(e.target.value)}
+              className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+
+          <button
+            onClick={guardarCompra}
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            Guardar compra
+          </button>
       </div>
-      <input
-        type="number"
-        placeholder="Cantidad"
-        value={cantidad}
-        onChange={(e) => setCantidad(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <input
-        type="number"
-        placeholder="Coste por unidad"
-        value={costeUnidad}
-        onChange={(e) => setCosteUnidad(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <input
-        type="number"
-        placeholder="Total"
-        value={total}
-        onChange={(e) => setTotal(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <input
-        type="text"
-        placeholder="Proveedor"
-        value={proveedor}
-        onChange={(e) => setProveedor(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <input
-        type="text"
-        placeholder="Forma de pago"
-        value={formaPago}
-        onChange={(e) => setFormaPago(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <input
-        type="number"
-        placeholder="Precio de venta por unidad"
-        value={precioVenta}
-        onChange={(e) => setPrecioVenta(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <button
-        onClick={guardarCompra}
-        className="bg-blue-600 text-white px-4 py-2 rounded"
-      >
-        Guardar compra
-      </button>
     </div>
   );
 }
