@@ -31,9 +31,9 @@ export default function App() {
 
   return (
     <Router>
-      <div>
+      <div className="min-h-screen bg-gray-100 p-[20px]">
         <button
-          className="text-sm text-red-600 underline float-right m-4"
+          className="text-sm text-red-600 underline float-right "
           onClick={() => supabase.auth.signOut()}
         >
           Cerrar sesión

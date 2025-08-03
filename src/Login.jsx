@@ -1,50 +1,74 @@
-// Login.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
 
-export default function Login({ onLogin }) {
+export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [esRegistro, setEsRegistro] = useState(false);
+  const [registrando, setRegistrando] = useState(false);
+  const [mensaje, setMensaje] = useState("");
 
-  const manejarLogin = async () => {
-    const { data, error } = esRegistro
-      ? await supabase.auth.signUp({ email, password })
-      : await supabase.auth.signInWithPassword({ email, password });
+  useEffect(() => {
+    setEmail("");
+    setPassword("");
+    setMensaje("");
+  }, [registrando]);
 
-    if (error) {
-      alert("Error: " + error.message);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (registrando) {
+      const { error } = await supabase.auth.signUp({ email, password });
+      setMensaje(error ? `Error: ${error.message}` : "Revisá tu mail para confirmar.");
     } else {
-      onLogin();
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      setMensaje(error ? `Error: ${error.message}` : "Inicio de sesión exitoso.");
     }
   };
 
   return (
-    <div className="p-4 max-w-md mx-auto">
-      <h2 className="text-xl font-bold mb-4">{esRegistro ? "Registrarse" : "Iniciar sesión"}</h2>
-      <input
-        type="email"
-        placeholder="Email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <input
-        type="password"
-        placeholder="Contraseña"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        className="border p-2 mb-2 w-full"
-      />
-      <button onClick={manejarLogin} className="bg-blue-600 text-white px-4 py-2 w-full rounded">
-        {esRegistro ? "Registrarse" : "Iniciar sesión"}
-      </button>
-      <p
-        className="text-blue-700 mt-2 cursor-pointer underline text-sm"
-        onClick={() => setEsRegistro(!esRegistro)}
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+      <form
+        onSubmit={handleSubmit}
+        className="w-1/4 max-w-sm bg-white shadow-xl rounded-2xl p-6"
       >
-        {esRegistro ? "¿Ya tenés cuenta? Iniciar sesión" : "¿No tenés cuenta? Registrate"}
-      </p>
+        <div className="space-y-[12px]">
+          <h2 className="text-2xl font-bold text-center">
+            {registrando ? "Registrarse" : "Iniciar Sesión"}
+          </h2>
+          <input
+            type="email"
+            placeholder="Correo electrónico"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full h-[52px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+          <input
+            type="password"
+            placeholder="Contraseña"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full h-[52px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+          <button
+            type="submit"
+            className="w-full h-[52px] bg-blue-600 text-white rounded-[12px] hover:bg-blue-700 transition"
+          >
+            {registrando ? "Registrarse" : "Iniciar Sesión"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRegistrando(!registrando)}
+            className="text-sm text-blue-600 hover:underline text-left"
+          >
+            {registrando
+              ? "¿Ya tenés una cuenta? Iniciar sesión"
+              : "¿No tenés cuenta? Registrate"}
+          </button>
+          {mensaje && (
+            <p className="text-center text-red-500 text-sm">{mensaje}</p>
+          )}
+        </div>
+      </form>
     </div>
   );
 }
