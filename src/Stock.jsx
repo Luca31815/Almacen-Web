@@ -1,16 +1,28 @@
+// Stock.jsx
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Stock() {
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState("");
+  const navigate = useNavigate();
 
-  // Cargar stock y categorías
+  const almacen_id = localStorage.getItem('almacen_id');
+
   useEffect(() => {
+    if (!almacen_id) {
+      navigate("/almacenes");
+      return;
+    }
+
     const fetchStock = async () => {
-      const { data, error } = await supabase.from('Stock').select();
+      const { data, error } = await supabase
+        .from('Stock')
+        .select()
+        .eq('almacen_id', almacen_id); // Filtrar por almacén
+
       if (error) {
         console.error('Error al cargar stock', error);
       } else {
@@ -21,10 +33,10 @@ export default function Stock() {
         setCategorias(categoriasUnicas);
       }
     };
-    fetchStock();
-  }, []);
 
-  // Filtrar productos por categoría seleccionada (si hay)
+    fetchStock();
+  }, [almacen_id, navigate]);
+
   const productosFiltrados = categoriaSeleccionada
     ? productos.filter(p => p.categoria === categoriaSeleccionada)
     : productos;
@@ -40,13 +52,12 @@ export default function Stock() {
 
       <h2 className="text-xl font-bold mb-2">Stock Actual</h2>
 
-      {/* SELECT DE CATEGORÍAS */}
       <div className="mb-4">
         <label className="block mb-1 text-sm text-gray-700">Filtrar por categoría:</label>
         <select
           value={categoriaSeleccionada}
           onChange={(e) => setCategoriaSeleccionada(e.target.value)}
-          className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="w-full p-2  border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
         >
           <option value="">Todas</option>
           {categorias.map((cat) => (
@@ -55,8 +66,7 @@ export default function Stock() {
         </select>
       </div>
 
-      {/* TABLA DE STOCK */}
-      <table className="table-auto w-full">
+      <table className="table-auto w-full text-gray-500">
         <thead>
           <tr>
             <th className="px-4 py-2 border">Producto</th>

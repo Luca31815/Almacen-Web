@@ -10,28 +10,45 @@ export default function Ventas() {
   const [gananciaBruta, setGananciaBruta] = useState("");
   const [gananciaNeta, setGananciaNeta] = useState("");
 
+  const almacenId = localStorage.getItem("almacen_id");
+
   useEffect(() => {
     const cargarProductos = async () => {
-      const { data, error } = await supabase.from("Stock").select("nombre");
-      if (!error) setProductosStock(data.map((p) => p.nombre));
-    };
-    cargarProductos();
-  }, []);
+      if (!almacenId) return;
 
-  // Buscar la cantidad disponible del producto seleccionado
+      const { data, error } = await supabase
+        .from("Stock")
+        .select("nombre")
+        .eq("almacen_id", almacenId);
+
+      if (!error && data) {
+        setProductosStock(data.map((p) => p.nombre));
+      }
+    };
+
+    cargarProductos();
+  }, [almacenId]);
+
   useEffect(() => {
     const obtenerStock = async () => {
-      if (!nombre) return;
+      if (!nombre || !almacenId) return;
+
       const { data, error } = await supabase
         .from("Stock")
         .select("cantidad")
         .eq("nombre", nombre)
+        .eq("almacen_id", almacenId)
         .single();
 
-      if (!error && data) setCantidadDisponible(data.cantidad || 0);
+      if (!error && data) {
+        setCantidadDisponible(data.cantidad || 0);
+      } else {
+        setCantidadDisponible(0);
+      }
     };
+
     obtenerStock();
-  }, [nombre]);
+  }, [nombre, almacenId]);
 
   const handleCantidadChange = (e) => {
     const value = parseInt(e.target.value);
@@ -55,6 +72,7 @@ export default function Ventas() {
     const nuevaVenta = {
       nombre,
       cantidad: cantidadNumero,
+      almacen_id: almacenId,
       gananciaBruta: parseFloat(gananciaBruta),
       gananciaNeta: parseFloat(gananciaNeta),
     };
@@ -68,13 +86,14 @@ export default function Ventas() {
       return;
     }
 
-    // Actualizar stock restando la cantidad vendida
+    // Actualizar el stock correspondiente
     const nuevaCantidad = cantidadDisponible - cantidadNumero;
 
     const { error: updateError } = await supabase
       .from("Stock")
       .update({ cantidad: nuevaCantidad })
-      .eq("nombre", nombre);
+      .eq("nombre", nombre)
+      .eq("almacen_id", almacenId);
 
     if (updateError) {
       alert("Error al actualizar stock: " + updateError.message);
@@ -91,7 +110,7 @@ export default function Ventas() {
 
   return (
     <div className="min-h-screen flex justify-center bg-gray-100 px-4">
-      <div className="w-1/2 max-w-sm lg:w-1/4 bg-white shadow-xl rounded-2xl p-6 space-y-[16px]">
+      <div className="max-w-xl  bg-white shadow-xl rounded-2xl p-6 space-y-[16px]">
         <Link
           to="/"
           className="inline-block mb-4 bg-blue-500 text-white px-4 py-2 rounded"
@@ -105,7 +124,7 @@ export default function Ventas() {
           placeholder="Seleccionar o escribir producto"
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
-          className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border p-2 w-full h-10 bg-gray-200 px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
         <datalist id="productos">
           {productosStock.map((prod) => (
@@ -118,21 +137,21 @@ export default function Ventas() {
           placeholder={`Cantidad (máx ${cantidadDisponible})`}
           value={cantidadVentas}
           onChange={handleCantidadChange}
-          className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border p-2 w-full h-10 bg-gray-200 px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
         <input
           type="number"
           placeholder="Ganancia Bruta"
           value={gananciaBruta}
           onChange={(e) => setGananciaBruta(e.target.value)}
-          className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border p-2 w-full h-10 bg-gray-200 px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
         <input
           type="number"
           placeholder="Ganancia Neta"
           value={gananciaNeta}
           onChange={(e) => setGananciaNeta(e.target.value)}
-          className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border p-2 w-full h-10 bg-gray-200 px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
 
         <button

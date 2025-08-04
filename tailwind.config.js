@@ -1,11 +1,15 @@
-@type {import('tailwindcss').Config} 
-export default {
+module.exports = {
   content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
+    "./src/**/*.{js,jsx,ts,tsx}",
+    "./public/index.html",
   ],
   theme: {
     extend: {},
   },
+  safelist: [
+    "grid-cols-1",
+    "md:grid-cols-2",
+    "lg:grid-cols-2",
+  ],
   plugins: [],
-}
+};

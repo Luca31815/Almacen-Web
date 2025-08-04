@@ -1,3 +1,4 @@
+// Compras.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import { Link } from 'react-router-dom';
@@ -12,10 +13,14 @@ export default function Compras() {
   const [proveedor, setProveedor] = useState("");
   const [formaPago, setFormaPago] = useState("");
 
-  // Cargar productos y categorías al montar el componente
+  const almacenId = localStorage.getItem("almacen_id");
+
   useEffect(() => {
     const cargarDatos = async () => {
-      const { data: productos, error: errorProd } = await supabase.from("Stock").select("nombre, categoria");
+      const { data: productos, error: errorProd } = await supabase
+        .from("Stock")
+        .select("nombre, categoria")
+        .eq("almacen_id", almacenId);
 
       if (!errorProd) {
         setProductosStock(productos.map(p => p.nombre));
@@ -25,8 +30,8 @@ export default function Compras() {
       }
     };
 
-    cargarDatos();
-  }, []);
+    if (almacenId) cargarDatos();
+  }, [almacenId]);
 
   const guardarCompra = async () => {
     const cantidadNumero = parseInt(cantidad);
@@ -45,6 +50,8 @@ export default function Compras() {
       total,
       proveedor,
       formaPago,
+      categoria,
+      almacen_id: almacenId,
     };
 
     const { error: comprasError } = await supabase.from("Compras").insert([nuevaCompra]);
@@ -59,13 +66,18 @@ export default function Compras() {
       .from("Stock")
       .select("*")
       .eq("nombre", nombre)
+      .eq("almacen_id", almacenId)
       .single();
 
     if (productoExistente) {
       const nuevaCantidad = productoExistente.cantidad + cantidadNumero;
-      await supabase.from("Stock").update({ cantidad: nuevaCantidad }).eq("nombre", nombre);
+      await supabase
+        .from("Stock")
+        .update({ cantidad: nuevaCantidad })
+        .eq("nombre", nombre)
+        .eq("almacen_id", almacenId);
     } else {
-      await supabase.from("Stock").insert([{ nombre, cantidad: cantidadNumero, categoria }]);
+      await supabase.from("Stock").insert([{ nombre, cantidad: cantidadNumero, categoria, almacen_id: almacenId }]);
     }
 
     setNombre("");
@@ -80,20 +92,19 @@ export default function Compras() {
 
   return (
     <div className="min-h-screen flex justify-center bg-gray-100 px-4">
-      <div className="w-1/2 max-w-sm lg:w-1/4 bg-white shadow-xl rounded-2xl p-6 space-y-[16px]">
+      <div className="max-w-xl bg-white shadow-xl rounded-2xl p-6 space-y-[16px]">
         <Link to="/" className="inline-block mb-4 bg-blue-500 text-white px-4 py-2 rounded">
           Volver al menú
         </Link>
 
         <h1 className="text-xl font-bold mb-4">Cargar Compra</h1>
 
-        {/* NOMBRE */}
         <input
           list="productos"
           placeholder="Seleccionar o escribir producto"
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
-          className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border p-2 w-full h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
         <datalist id="productos">
           {productosStock.map((prod) => (
@@ -101,13 +112,12 @@ export default function Compras() {
           ))}
         </datalist>
 
-        {/* CATEGORÍA */}
         <input
           list="categorias"
           placeholder="Seleccionar o escribir categoría"
           value={categoria}
           onChange={(e) => setCategoria(e.target.value)}
-          className="border p-2 w-full h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border p-2 w-full h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
         <datalist id="categorias">
           {categoriasStock.map((cat) => (
@@ -115,49 +125,45 @@ export default function Compras() {
           ))}
         </datalist>
 
-        {/* CANTIDAD Y COSTO */}
         <div className="flex gap-4 mb-4 justify-between">
           <input
             type="number"
             placeholder="Cantidad"
             value={cantidad}
             onChange={(e) => setCantidad(e.target.value)}
-            className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
           <input
             type="number"
             placeholder="Coste por unidad"
             value={costeUnidad}
             onChange={(e) => setCosteUnidad(e.target.value)}
-            className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
         </div>
 
-        {/* TOTAL */}
-        <div className="mb-4">
-          <span className="text-gray-700">Total: </span>
-          <span className="font-semibold">${totalCalculado.toFixed(2)}</span>
+        <div className="mb-4 ">
+          <span className="text-gray-700 h-10">Total: </span>
+          <span className="font-semibold h-10">${totalCalculado.toFixed(2)}</span>
         </div>
 
-        {/* PROVEEDOR Y FORMA DE PAGO */}
         <div className="flex gap-4 mb-4 justify-between">
           <input
             type="text"
             placeholder="Proveedor"
             value={proveedor}
             onChange={(e) => setProveedor(e.target.value)}
-            className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
           <input
             type="text"
             placeholder="Forma de pago"
             value={formaPago}
             onChange={(e) => setFormaPago(e.target.value)}
-            className="border p-2 w-5/11 h-[30px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
         </div>
 
-        {/* GUARDAR */}
         <button
           onClick={guardarCompra}
           className="bg-blue-600 text-white px-4 py-2 rounded"
