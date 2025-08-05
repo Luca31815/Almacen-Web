@@ -1,11 +1,16 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
+import { useNavigate } from "react-router-dom";
+import { nanoid } from "nanoid";
+import { sendCodeEmail } from "./utils/sendEmail"; // función que tenés que implementar
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [registrando, setRegistrando] = useState(false);
   const [mensaje, setMensaje] = useState("");
+
+  const navigate = useNavigate();
 
   useEffect(() => {
     setEmail("");
@@ -17,11 +22,45 @@ export default function Login() {
     e.preventDefault();
 
     if (registrando) {
-      const { error } = await supabase.auth.signUp({ email, password });
-      setMensaje(error ? `Error: ${error.message}` : "Revisá tu mail para confirmar.");
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: null // desactiva el email de confirmación
+        }
+      });
+
+      if (error) {
+        setMensaje(`Error: ${error.message}`);
+        return;
+      }
+
+      const user = data.user;
+      if (user) {
+        // Insertar en tabla Usuarios
+        await supabase.from("Usuarios").insert([{ id: user.id, email: user.email }]);
+
+        // Generar código de verificación
+        const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // Guardar el código en tabla Verificaciones
+        await supabase
+          .from("Verificaciones")
+          .upsert({ email: user.email, codigo });
+
+        // Enviar código por correo
+        await sendCodeEmail(user.email, codigo);
+
+        // ✅ Guardar contraseña temporal
+        localStorage.setItem("temp_password", password);
+
+        // Redirigir a pantalla de verificación
+        navigate(`/verificar?email=${encodeURIComponent(user.email)}`);
+      }
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       setMensaje(error ? `Error: ${error.message}` : "Inicio de sesión exitoso.");
+      
     }
   };
 

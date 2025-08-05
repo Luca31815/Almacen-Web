@@ -97,7 +97,7 @@ export default function Compras() {
           Volver al menú
         </Link>
 
-        <h1 className="text-xl font-bold mb-4">Cargar Compra</h1>
+        <h1 className="text-xl  font-bold mb-4">Cargar Compra</h1>
 
         <input
           list="productos"
