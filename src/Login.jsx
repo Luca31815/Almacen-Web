@@ -26,13 +26,13 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-300 px-4">
       <form
         onSubmit={handleSubmit}
-        className="w-1/4 max-w-sm bg-white shadow-xl rounded-2xl p-6"
+        className="max-w-xl bg-white shadow-xl rounded-2xl p-6"
       >
         <div className="space-y-[12px]">
-          <h2 className="text-2xl font-bold text-center">
+          <h2 className="text-2xl text-gray-700 font-bold text-center">
             {registrando ? "Registrarse" : "Iniciar Sesión"}
           </h2>
           <input
