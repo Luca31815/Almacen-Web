@@ -1,7 +1,7 @@
 // Compras.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
-import { Link } from 'react-router-dom';
+import { Link } from "react-router-dom";
 
 export default function Compras() {
   const [nombre, setNombre] = useState("");
@@ -24,8 +24,9 @@ export default function Compras() {
 
       if (!errorProd) {
         setProductosStock(productos.map(p => p.nombre));
-
-        const categoriasUnicas = [...new Set(productos.map(p => p.categoria).filter(Boolean))];
+        const categoriasUnicas = [...new Set(
+          productos.map(p => p.categoria).filter(Boolean)
+        )];
         setCategoriasStock(categoriasUnicas);
       }
     };
@@ -34,7 +35,7 @@ export default function Compras() {
   }, [almacenId]);
 
   const guardarCompra = async () => {
-    const cantidadNumero = parseInt(cantidad);
+    const cantidadNumero = parseInt(cantidad, 10);
     const costeNumero = parseFloat(costeUnidad);
     const total = cantidadNumero * costeNumero;
 
@@ -55,7 +56,6 @@ export default function Compras() {
     };
 
     const { error: comprasError } = await supabase.from("Compras").insert([nuevaCompra]);
-
     if (comprasError) {
       console.error("Error al guardar compra:", comprasError);
       alert("Error al guardar en compras: " + comprasError.message);
@@ -64,22 +64,24 @@ export default function Compras() {
 
     const { data: productoExistente } = await supabase
       .from("Stock")
-      .select("*")
+      .select("cantidad")
       .eq("nombre", nombre)
       .eq("almacen_id", almacenId)
       .single();
 
     if (productoExistente) {
-      const nuevaCantidad = productoExistente.cantidad + cantidadNumero;
-      await supabase
-        .from("Stock")
-        .update({ cantidad: nuevaCantidad })
-        .eq("nombre", nombre)
-        .eq("almacen_id", almacenId);
+      await supabase.from("Stock").update({
+        cantidad: productoExistente.cantidad + cantidadNumero
+      })
+      .eq("nombre", nombre)
+      .eq("almacen_id", almacenId);
     } else {
-      await supabase.from("Stock").insert([{ nombre, cantidad: cantidadNumero, categoria, almacen_id: almacenId }]);
+      await supabase.from("Stock").insert([
+        { nombre, cantidad: cantidadNumero, categoria, almacen_id: almacenId }
+      ]);
     }
 
+    // Limpiar campos
     setNombre("");
     setCategoria("");
     setCantidad("");
@@ -88,87 +90,89 @@ export default function Compras() {
     setFormaPago("");
   };
 
-  const totalCalculado = cantidad && costeUnidad ? parseInt(cantidad || 0) * parseFloat(costeUnidad || 0) : 0;
+  const totalCalculado = (parseInt(cantidad, 10) || 0) * (parseFloat(costeUnidad) || 0);
 
   return (
-    <div className="min-h-screen flex justify-center bg-gray-100 px-4">
-      <div className="max-w-xl bg-white shadow-xl rounded-2xl p-6 space-y-[16px]">
-        <Link to="/" className="inline-block mb-4 bg-blue-500 text-white px-4 py-2 rounded">
-          Volver al menú
+    <div className="bg-gray-100 px-4 py-6 flex justify-center">
+      <div className="w-full max-w-full sm:max-w-lg mx-auto bg-white shadow-xl rounded-2xl p-6 space-y-6">
+        <Link to="/" className="inline-block text-sm text-blue-500 px-4 py-2 rounded-lg hover:bg-blue-600 hover:text-white transition">
+          ← Volver al menú
         </Link>
 
-        <h1 className="text-xl  font-bold mb-4">Cargar Compra</h1>
+        <h1 className="text-2xl text-gray-700 font-bold text-center">Cargar Compra</h1>
 
-        <input
-          list="productos"
-          placeholder="Seleccionar o escribir producto"
-          value={nombre}
-          onChange={(e) => setNombre(e.target.value)}
-          className="border p-2 w-full h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
-        />
-        <datalist id="productos">
-          {productosStock.map((prod) => (
-            <option key={prod} value={prod} />
-          ))}
-        </datalist>
+        {/* Producto y Categoría */}
+        <div className="space-y-4">
+          <input
+            list="productos"
+            placeholder="Producto"
+            value={nombre}
+            onChange={e => setNombre(e.target.value)}
+            className="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-500"
+          />
+          <datalist id="productos">
+            {productosStock.map(prod => <option key={prod} value={prod} />)}
+          </datalist>
 
-        <input
-          list="categorias"
-          placeholder="Seleccionar o escribir categoría"
-          value={categoria}
-          onChange={(e) => setCategoria(e.target.value)}
-          className="border p-2 w-full h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
-        />
-        <datalist id="categorias">
-          {categoriasStock.map((cat) => (
-            <option key={cat} value={cat} />
-          ))}
-        </datalist>
+          <input
+            list="categorias"
+            placeholder="Categoría"
+            value={categoria}
+            onChange={e => setCategoria(e.target.value)}
+            className="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-500"
+          />
+          <datalist id="categorias">
+            {categoriasStock.map(cat => <option key={cat} value={cat} />)}
+          </datalist>
+        </div>
 
-        <div className="flex gap-4 mb-4 justify-between">
+        {/* Cantidad y Coste */}
+        <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
           <input
             type="number"
             placeholder="Cantidad"
             value={cantidad}
-            onChange={(e) => setCantidad(e.target.value)}
-            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            onChange={e => setCantidad(e.target.value)}
+            className="flex-1 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-500"
           />
           <input
             type="number"
-            placeholder="Coste por unidad"
+            placeholder="Coste unidad"
             value={costeUnidad}
-            onChange={(e) => setCosteUnidad(e.target.value)}
-            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            onChange={e => setCosteUnidad(e.target.value)}
+            className="flex-1 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-500"
           />
         </div>
 
-        <div className="mb-4 ">
-          <span className="text-gray-700 h-10">Total: </span>
-          <span className="font-semibold h-10">${totalCalculado.toFixed(2)}</span>
+        {/* Total calculado */}
+        <div className="text-right text-lg font-semibold text-gray-700">
+          Total: ${totalCalculado.toFixed(2)}
         </div>
 
-        <div className="flex gap-4 mb-4 justify-between">
+        {/* Proveedor y Forma de pago */}
+        <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
           <input
             type="text"
             placeholder="Proveedor"
             value={proveedor}
-            onChange={(e) => setProveedor(e.target.value)}
-            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            onChange={e => setProveedor(e.target.value)}
+            className="flex-1 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-500"
           />
           <input
             type="text"
             placeholder="Forma de pago"
             value={formaPago}
-            onChange={(e) => setFormaPago(e.target.value)}
-            className="border p-2 w-5/11 h-10 px-4 bg-gray-200 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+            onChange={e => setFormaPago(e.target.value)}
+            className="flex-1 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-500"
           />
         </div>
 
+        {/* Botón Guardar */}
         <button
           onClick={guardarCompra}
-          className="bg-blue-600 text-white px-4 py-2 rounded"
+          className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition"
         >
-          Guardar compra
+          Guardar Compra
         </button>
       </div>
     </div>
