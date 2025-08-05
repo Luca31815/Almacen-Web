@@ -9,41 +9,64 @@ export default function Almacenes({ usuario, onSeleccionarAlmacen }) {
   const [almacenSeleccionado, setAlmacenSeleccionado] = useState(null);
   const navigate = useNavigate();
 
-  // Cargar almacenes propios y compartidos
+  // Cargar almacenes propios y compartidos y enriquecer con datos del dueño
   useEffect(() => {
     const fetchAlmacenes = async () => {
+      // Traer propios con muchos campos
       const { data: propios } = await supabase
         .from('Almacenes')
         .select('*')
         .eq('usuario_id', usuario.id);
+      // Traer compartidos
       const { data: permisos } = await supabase
         .from('AlmacenPermisos')
         .select('almacen_id')
         .eq('usuario_id', usuario.id);
-      const ids = permisos?.map(p => p.almacen_id) || [];
+      const idsCompartidos = permisos?.map(p => p.almacen_id) || [];
       let compartidos = [];
-      if (ids.length) {
+      if (idsCompartidos.length) {
         const { data } = await supabase
           .from('Almacenes')
           .select('*')
-          .in('id', ids);
+          .in('id', idsCompartidos);
         compartidos = data || [];
       }
-      setAlmacenes([...(propios || []), ...compartidos]);
+      // Unir y enriquecer con nombres
+      const lista = [...(propios || []), ...compartidos];
+      const userIds = [...new Set(lista.map(a => a.usuario_id))];
+      const { data: users } = await supabase
+        .from('Usuarios')
+        .select('id, first_name, last_name')
+        .in('id', userIds);
+      const mapaUsuarios = Object.fromEntries(
+        (users || []).map(u => [u.id, `${u.first_name} ${u.last_name}`])
+      );
+      const enriched = lista.map(a => ({
+        ...a,
+        ownerName: mapaUsuarios[a.usuario_id] || 'Desconocido'
+      }));
+      setAlmacenes(enriched);
     };
     fetchAlmacenes();
   }, [usuario.id]);
 
-  // Crear un nuevo almacén
+  // Crear un nuevo almacén y añadir ownerName
   const crearAlmacen = async () => {
     if (!nombreNuevo.trim()) return;
     const { data, error } = await supabase
       .from('Almacenes')
       .insert([{ nombre: nombreNuevo.trim(), usuario_id: usuario.id }])
-      .select()
+      .select('*')
       .single();
-    if (!error) {
-      setAlmacenes(prev => [...prev, data]);
+    if (!error && data) {
+      // Obtener nombre del dueño creado
+      const { data: ownerData } = await supabase
+        .from('Usuarios')
+        .select('first_name, last_name')
+        .eq('id', data.usuario_id)
+        .single();
+      const ownerName = ownerData ? `${ownerData.first_name} ${ownerData.last_name}` : 'Desconocido';
+      setAlmacenes(prev => [...prev, { ...data, ownerName }]);
       setNombreNuevo('');
     }
   };
@@ -72,31 +95,27 @@ export default function Almacenes({ usuario, onSeleccionarAlmacen }) {
           {almacenes.map(a => (
             <li
               key={a.id}
-              className={
-                `p-4 rounded-lg border \${almacenSeleccionado === a.id ? 'bg-blue-100 border-blue-300' : 'bg-white border-gray-200'}`
-              }
+              className={`p-4 rounded-lg border ${almacenSeleccionado === a.id ? 'bg-blue-100 border-blue-300' : 'bg-white border-gray-200'}`}
             >
-              <div className="flex justify-between items-center">
-                <span className="text-gray-800 font-medium">{a.nombre}</span>
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className="text-gray-800 font-medium text-lg">{a.nombre}</span>
+                  <p className="text-sm text-gray-600">Dueño: {a.ownerName}</p>
+                </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => manejarCompartir(a)}
                     className="text-sm text-green-500 hover:text-green-700 transition"
-                  >
-                    Compartir
-                  </button>
+                  >Compartir</button>
                   <button
                     onClick={() => manejarSeleccion(a)}
                     className="text-sm text-blue-500 hover:text-blue-700 transition"
-                  >
-                    Usar este
-                  </button>
+                  >Usar este</button>
                 </div>
               </div>
             </li>
           ))}
         </ul>
-
         <div className="space-y-4">
           <input
             value={nombreNuevo}
@@ -107,9 +126,7 @@ export default function Almacenes({ usuario, onSeleccionarAlmacen }) {
           <button
             onClick={crearAlmacen}
             className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition"
-          >
-            Crear almacén
-          </button>
+          >Crear almacén</button>
         </div>
       </div>
     </div>

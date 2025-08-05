@@ -5,6 +5,8 @@ import { useNavigate } from "react-router-dom";
 import { sendCodeEmail } from "./utils/sendEmail";
 
 export default function Login({ onLogin }) {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [registrando, setRegistrando] = useState(false);
@@ -14,6 +16,8 @@ export default function Login({ onLogin }) {
 
   useEffect(() => {
     // Resetear campos al cambiar modo
+    setFirstName("");
+    setLastName("");
     setEmail("");
     setPassword("");
     setMensaje("");
@@ -24,7 +28,11 @@ export default function Login({ onLogin }) {
     setMensaje("");
 
     if (registrando) {
-      // Validación básica del email
+      // Validación básica de inputs
+      if (!firstName.trim() || !lastName.trim()) {
+        setMensaje("Ingrese nombre y apellido.");
+        return;
+      }
       if (!email || !/\S+@\S+\.\S+/.test(email)) {
         setMensaje("Ingrese un correo válido antes de solicitar el código.");
         return;
@@ -37,12 +45,11 @@ export default function Login({ onLogin }) {
         await supabase
           .from("Verificaciones")
           .upsert({
-                email,
-                 codigo,
-                 creado_en: new Date().toISOString()   // ← Aquí renovamos la marca de tiempo
-            }, { onConflict: ['email'] });
+            email,
+            codigo,
+            creado_en: new Date().toISOString()
+          }, { onConflict: ['email'] });
 
-        // Log de depuración
         console.log("Email para verificación:", email);
         console.log("Código generado:", codigo);
 
@@ -50,8 +57,11 @@ export default function Login({ onLogin }) {
         await sendCodeEmail(email, codigo);
         console.log("sendCodeEmail: OK");
 
-        // Guardar contraseña temporal para verificación
+        // Guardar datos temporales
         localStorage.setItem("temp_password", password);
+        localStorage.setItem("temp_firstName", firstName);
+        localStorage.setItem("temp_lastName", lastName);
+
         // Redirigir a Verificar
         navigate(`/verificar?email=${encodeURIComponent(email)}`);
       } catch (error) {
@@ -77,8 +87,29 @@ export default function Login({ onLogin }) {
         className="max-w-xl bg-white shadow-xl rounded-2xl p-6 space-y-[12px]"
       >
         <h2 className="text-2xl text-gray-700 font-bold text-center">
-          {registrando ? "Registrate" : "Iniciar Sesión"}
+          {registrando ? "Registrarse" : "Iniciar Sesión"}
         </h2>
+
+        {registrando && (
+          <>
+            <input
+              type="text"
+              placeholder="Nombre"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className="w-full h-[52px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+              required
+            />
+            <input
+              type="text"
+              placeholder="Apellido"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className="w-full h-[52px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
+              required
+            />
+          </>
+        )}
 
         <input
           type="email"
@@ -100,7 +131,7 @@ export default function Login({ onLogin }) {
           type="submit"
           className="w-full h-[52px] bg-blue-600 text-white rounded-[12px] hover:bg-blue-700 transition"
         >
-          {registrando ? "Registrarse" : "Iniciar Sesión"}
+          {registrando ? "Enviar código" : "Iniciar Sesión"}
         </button>
         <button
           type="button"

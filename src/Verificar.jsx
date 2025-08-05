@@ -7,6 +7,7 @@ export default function Verificar() {
   const [codigoIngresado, setCodigoIngresado] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [email, setEmail] = useState("");
+  const [verificando, setVerificando] = useState(false);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -28,6 +29,7 @@ export default function Verificar() {
       return;
     }
 
+    setVerificando(true);
     // Obtener código de la tabla
     const { data, error } = await supabase
       .from("Verificaciones")
@@ -37,28 +39,33 @@ export default function Verificar() {
 
     if (error || !data) {
       setMensaje("No se encontró el código para este correo.");
+      setVerificando(false);
       return;
     }
 
-    // Validar expiración
+    // Validar expiración (15 minutos)
     const ahora = new Date();
     const creadoEn = new Date(data.creado_en);
     const diffMin = (ahora - creadoEn) / 1000 / 60;
     if (diffMin > 15) {
       setMensaje("El código expiró. Registrate de nuevo.");
+      setVerificando(false);
       return;
     }
 
     // Comparar códigos
     if (data.codigo !== codigoIngresado) {
       setMensaje("Código incorrecto.");
+      setVerificando(false);
       return;
     }
 
-    // Obtener contraseña temporal
+    // Obtener datos temporales
     const password = localStorage.getItem("temp_password");
-    if (!password) {
-      setMensaje("No se encontró la contraseña temporal. Iniciá sesión manualmente.");
+    const firstName = localStorage.getItem("temp_firstName");
+    const lastName = localStorage.getItem("temp_lastName");
+    if (!password || !firstName || !lastName) {
+      setMensaje("Faltan datos de registro. Iniciá sesión manualmente.");
       navigate("/login");
       return;
     }
@@ -71,11 +78,17 @@ export default function Verificar() {
       });
       if (signUpError) {
         setMensaje(`Error al crear usuario: ${signUpError.message}`);
+        setVerificando(false);
         return;
       }
 
-      // Insertar en tabla Usuarios interna
-      await supabase.from("Usuarios").insert([{ id: signUpData.user.id, email }]);
+      // Insertar en tabla Usuarios interna con nombre y apellido
+      await supabase.from("Usuarios").insert([{ 
+        id: signUpData.user.id,
+        email,
+        first_name: firstName,
+        last_name: lastName
+      }]);
 
       // Iniciar sesión
       const { error: loginError } = await supabase.auth.signInWithPassword({
@@ -84,15 +97,21 @@ export default function Verificar() {
       });
       if (loginError) {
         setMensaje(`Error al iniciar sesión: ${loginError.message}`);
+        setVerificando(false);
         return;
       }
 
-      // Limpieza y redirección
+      // Limpieza de datos temporales
       localStorage.removeItem("temp_password");
+      localStorage.removeItem("temp_firstName");
+      localStorage.removeItem("temp_lastName");
+
+      // Redirigir al menú principal
       navigate("/");
     } catch (err) {
       console.error("Error en verificación:", err);
       setMensaje(err.message || "Ocurrió un error durante la verificación.");
+      setVerificando(false);
     }
   };
 
@@ -113,14 +132,15 @@ export default function Verificar() {
           placeholder="Código de 6 dígitos"
           value={codigoIngresado}
           onChange={(e) => setCodigoIngresado(e.target.value)}
-          className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="w-full p-2 border border-gray-300 rounded text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
           required
         />
         <button
           type="submit"
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
+          disabled={verificando}
+          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition disabled:opacity-50"
         >
-          Verificar
+          {verificando ? 'Verificando...' : 'Verificar'}
         </button>
         {mensaje && <p className="text-center text-red-500 text-sm">{mensaje}</p>}
       </form>
