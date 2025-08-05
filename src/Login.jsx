@@ -77,7 +77,7 @@ export default function Login({ onLogin }) {
         className="max-w-xl bg-white shadow-xl rounded-2xl p-6 space-y-[12px]"
       >
         <h2 className="text-2xl text-gray-700 font-bold text-center">
-          {registrando ? "Enviar código" : "Iniciar Sesión"}
+          {registrando ? "Registrate" : "Iniciar Sesión"}
         </h2>
 
         <input
@@ -100,7 +100,7 @@ export default function Login({ onLogin }) {
           type="submit"
           className="w-full h-[52px] bg-blue-600 text-white rounded-[12px] hover:bg-blue-700 transition"
         >
-          {registrando ? "Enviar código" : "Iniciar Sesión"}
+          {registrando ? "Registrarse" : "Iniciar Sesión"}
         </button>
         <button
           type="button"
