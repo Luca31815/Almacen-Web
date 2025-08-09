@@ -37,7 +37,5 @@ export async function sendCodeEmail(userEmail, code) {
     console.error('EmailJS error:', err);
     throw new Error('No se pudo enviar el email de verificación');
   });
-
-  console.log('✅ Email enviado:', response.status, response.text);
   return response;
 }

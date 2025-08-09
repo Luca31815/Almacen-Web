@@ -48,7 +48,7 @@ export default function Almacenes({ usuario, onSeleccionarAlmacen }) {
             || 'Desconocido'),
       }));
 
-      console.table(enriched.map(x => ({ id: x.id, nombre: x.nombre, ownerName: x.ownerName })));
+      
       setAlmacenes(enriched);
     } catch (e) {
       console.error('[ERROR] cargarAlmacenes (vista):', e);
@@ -150,13 +150,6 @@ export default function Almacenes({ usuario, onSeleccionarAlmacen }) {
     <div className="bg-gray-100 px-4 py-6 flex justify-center">
       <div className="w-full max-w-full sm:max-w-2xl mx-auto bg-white shadow-xl rounded-2xl p-6 space-y-6">
         <h2 className="text-2xl font-bold text-gray-700 text-center">Mis Almacenes</h2>
-
-        {/* DEBUG */}
-        <div className="text-xs text-gray-500">
-          <div>usuario.id: <b>{usuario?.id || '—'}</b></div>
-          <div>cargando: <b>{String(cargando)}</b></div>
-          <div>almacenes (count): <b>{almacenes.length}</b></div>
-        </div>
 
         <ul className="space-y-4">
           {almacenes.map(a => (

@@ -1,7 +1,7 @@
 // App.jsx
 import { useEffect, useRef, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from "react-router-dom";
-import { supabase } from "./supabase";
+import { useAuth } from "./AuthProvider";
 import Login from "./Login";
 import Verificar from "./Verificar";
 import Menu from "./Menu";
@@ -12,8 +12,7 @@ import Almacenes from "./Almacenes";
 import CompartirPermiso from "./CompartirPermiso";
 
 export default function App() {
-  const [usuario, setUsuario] = useState(null);           // auth.user
-  const [perfil, setPerfil] = useState(null);             // { first_name, last_name }
+  const { user, profile, loading, signOut } = useAuth(); // ✅ sesión real desde el provider
   const [almacenId, setAlmacenId] = useState(localStorage.getItem("almacen_id"));
 
   // Dropdown
@@ -44,91 +43,39 @@ export default function App() {
     };
   }, []);
 
-  // Cargar usuario + perfil
-  useEffect(() => {
-    const cargarUsuarioYPerfil = async () => {
-      const { data } = await supabase.auth.getUser();
-      const u = data?.user ?? null;
-      setUsuario(u);
-
-      if (u) {
-        // Cargar perfil desde tabla Usuarios con RLS: solo su propio registro
-        const { data: perfilData, error } = await supabase
-          .from("Usuarios")
-          .select("first_name, last_name")
-          .eq("id", u.id)
-          .single();
-
-        if (!error) setPerfil(perfilData);
-        else setPerfil(null);
-      } else {
-        setPerfil(null);
-      }
-    };
-
-    cargarUsuarioYPerfil();
-
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const u = session?.user ?? null;
-      setUsuario(u);
-
-      if (u) {
-        const { data: perfilData, error } = await supabase
-          .from("Usuarios")
-          .select("first_name, last_name")
-          .eq("id", u.id)
-          .single();
-
-        if (!error) setPerfil(perfilData);
-        else setPerfil(null);
-      } else {
-        setPerfil(null);
-      }
-    });
-
-    return () => {
-      listener.subscription.unsubscribe();
-    };
-  }, []);
-
   const handleSeleccionarAlmacen = (id) => {
     localStorage.setItem("almacen_id", id);
     setAlmacenId(id);
   };
 
- const handleLogout = async () => {
-  try {
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error("Error al cerrar sesión:", error);
-  } finally {
-    localStorage.removeItem("almacen_id");
-    // Recarga dura: limpia estado/react y vuelve a montar todo
-    window.location.reload();
-  }
-};
+  const handleLogout = async () => {
+    try {
+      await signOut();                  // ✅ cierra sesión + limpia claves en el provider
+    } finally {
+      setOpenUserMenu(false);
+      // No hace falta reload: al no haber user, se renderizan rutas de login
+    }
+  };
 
+  if (loading) {
+    return <div className="p-6 text-gray-600">Cargando sesión…</div>;
+  }
 
   // Inicial del usuario (prioriza first_name; fallback email)
   const initial = (
-    perfil?.first_name?.[0] ||
-    usuario?.email?.[0] ||
+    profile?.first_name?.[0] ||
+    user?.email?.[0] ||
     "?"
   ).toUpperCase();
 
   return (
     <Router>
-      {!usuario ? (
+      {!user ? (
         // Rutas de autenticación
         <Routes>
           <Route
             path="/login"
-            element={
-              <Login
-                onLogin={() =>
-                  supabase.auth.getUser().then(({ data }) => setUsuario(data.user))
-                }
-              />
-            }
+            element={<Login onLogin={() => { /* el AuthProvider actualizará solo */ }} />}
           />
           <Route path="/verificar" element={<Verificar />} />
           <Route path="/*" element={<Navigate to="/login" />} />
@@ -145,11 +92,9 @@ export default function App() {
               aria-haspopup="menu"
               aria-expanded={openUserMenu}
               aria-controls="user-menu"
-              title={usuario?.email || "Usuario"}
+              title={user?.email || "Usuario"}
             >
-              <span className="uppercase translate-y-[0.5px]">
-                {initial}
-              </span>
+              <span className="uppercase translate-y-[0.5px]">{initial}</span>
             </button>
 
             {/* Dropdown */}
@@ -162,9 +107,9 @@ export default function App() {
                 <div className="px-4 py-3 border-b border-gray-100">
                   <p className="text-sm text-gray-500">Sesión iniciada como</p>
                   <p className="text-sm font-medium text-gray-700 truncate">
-                    {perfil?.first_name
-                      ? `${perfil.first_name}${perfil.last_name ? " " + perfil.last_name : ""}`
-                      : usuario?.email}
+                    {profile?.first_name
+                      ? `${profile.first_name}${profile.last_name ? " " + profile.last_name : ""}`
+                      : user?.email}
                   </p>
                 </div>
                 <nav className="py-1 text-sm text-gray-700">
@@ -199,7 +144,7 @@ export default function App() {
                 path="/*"
                 element={
                   <Almacenes
-                    usuario={usuario}
+                    usuario={user} // ✅ id real de Auth
                     onSeleccionarAlmacen={handleSeleccionarAlmacen}
                   />
                 }
@@ -214,7 +159,7 @@ export default function App() {
                   path="/almacenes"
                   element={
                     <Almacenes
-                      usuario={usuario}
+                      usuario={user} // ✅ id real de Auth
                       onSeleccionarAlmacen={handleSeleccionarAlmacen}
                     />
                   }
