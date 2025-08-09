@@ -74,9 +74,22 @@ export function AuthProvider({ children }) {
       setProfile(null);
     }
   };
+    async function refreshProfile() {
+    const u = (await supabase.auth.getUser()).data.user;
+    if (!u) {
+        setProfile(null);
+        return;
+    }
+    const { data, error } = await supabase
+        .from("Usuarios")
+        .select("first_name, last_name, email")
+        .eq("id", u.id)
+        .single();
+    if (!error) setProfile(data);
+    }
 
   return (
-    <AuthCtx.Provider value={{ session, user, profile, loading, signOut }}>
+    <AuthCtx.Provider value={{ session, user, profile, loading, signOut, refreshProfile  }}>
       {children}
     </AuthCtx.Provider>
   );

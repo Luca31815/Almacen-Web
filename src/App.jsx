@@ -10,6 +10,7 @@ import Ventas from "./Ventas";
 import Stock from "./Stock";
 import Almacenes from "./Almacenes";
 import CompartirPermiso from "./CompartirPermiso";
+import Perfil from "./Perfil"; // ✅ import del perfil real
 
 export default function App() {
   const { user, profile, loading, signOut } = useAuth(); // ✅ sesión real desde el provider
@@ -50,10 +51,9 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await signOut();                  // ✅ cierra sesión + limpia claves en el provider
+      await signOut();
     } finally {
       setOpenUserMenu(false);
-      // No hace falta reload: al no haber user, se renderizan rutas de login
     }
   };
 
@@ -61,7 +61,7 @@ export default function App() {
     return <div className="p-6 text-gray-600">Cargando sesión…</div>;
   }
 
-  // Inicial del usuario (prioriza first_name; fallback email)
+  // Inicial del usuario
   const initial = (
     profile?.first_name?.[0] ||
     user?.email?.[0] ||
@@ -71,17 +71,12 @@ export default function App() {
   return (
     <Router>
       {!user ? (
-        // Rutas de autenticación
         <Routes>
-          <Route
-            path="/login"
-            element={<Login onLogin={() => { /* el AuthProvider actualizará solo */ }} />}
-          />
+          <Route path="/login" element={<Login />} />
           <Route path="/verificar" element={<Verificar />} />
           <Route path="/*" element={<Navigate to="/login" />} />
         </Routes>
       ) : (
-        // Rutas protegidas
         <div className="min-h-screen bg-gray-100 p-[20px]">
           {/* Header */}
           <div className="flex justify-end mb-2 relative">
@@ -144,7 +139,7 @@ export default function App() {
                 path="/*"
                 element={
                   <Almacenes
-                    usuario={user} // ✅ id real de Auth
+                    usuario={user}
                     onSeleccionarAlmacen={handleSeleccionarAlmacen}
                   />
                 }
@@ -159,7 +154,7 @@ export default function App() {
                   path="/almacenes"
                   element={
                     <Almacenes
-                      usuario={user} // ✅ id real de Auth
+                      usuario={user}
                       onSeleccionarAlmacen={handleSeleccionarAlmacen}
                     />
                   }
@@ -168,15 +163,7 @@ export default function App() {
                   path="/compartir-permiso"
                   element={<CompartirPermiso almacenId={almacenId} />}
                 />
-                {/* Placeholder de Perfil */}
-                <Route
-                  path="/perfil"
-                  element={
-                    <div className="max-w-lg mx-auto p-6 bg-white rounded-2xl shadow-xl">
-                      Pantalla de perfil (en construcción)
-                    </div>
-                  }
-                />
+                <Route path="/perfil" element={<Perfil />} /> {/* ✅ perfil real */}
                 <Route path="*" element={<Navigate to="/" />} />
               </>
             )}
