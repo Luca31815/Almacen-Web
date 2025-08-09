@@ -1,6 +1,6 @@
 // App.jsx
-import { useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, Link } from "react-router-dom";
 import { supabase } from "./supabase";
 import Login from "./Login";
 import Verificar from "./Verificar";
@@ -12,16 +12,78 @@ import Almacenes from "./Almacenes";
 import CompartirPermiso from "./CompartirPermiso";
 
 export default function App() {
-  const [usuario, setUsuario] = useState(null);
+  const [usuario, setUsuario] = useState(null);           // auth.user
+  const [perfil, setPerfil] = useState(null);             // { first_name, last_name }
   const [almacenId, setAlmacenId] = useState(localStorage.getItem("almacen_id"));
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUsuario(data?.user ?? null);
-    });
+  // Dropdown
+  const [openUserMenu, setOpenUserMenu] = useState(false);
+  const userBtnRef = useRef(null);
+  const userMenuRef = useRef(null);
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUsuario(session?.user ?? null);
+  // Cerrar dropdown al hacer click afuera o presionar Escape
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(e.target) &&
+        userBtnRef.current &&
+        !userBtnRef.current.contains(e.target)
+      ) {
+        setOpenUserMenu(false);
+      }
+    }
+    function onEsc(e) {
+      if (e.key === "Escape") setOpenUserMenu(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, []);
+
+  // Cargar usuario + perfil
+  useEffect(() => {
+    const cargarUsuarioYPerfil = async () => {
+      const { data } = await supabase.auth.getUser();
+      const u = data?.user ?? null;
+      setUsuario(u);
+
+      if (u) {
+        // Cargar perfil desde tabla Usuarios con RLS: solo su propio registro
+        const { data: perfilData, error } = await supabase
+          .from("Usuarios")
+          .select("first_name, last_name")
+          .eq("id", u.id)
+          .single();
+
+        if (!error) setPerfil(perfilData);
+        else setPerfil(null);
+      } else {
+        setPerfil(null);
+      }
+    };
+
+    cargarUsuarioYPerfil();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const u = session?.user ?? null;
+      setUsuario(u);
+
+      if (u) {
+        const { data: perfilData, error } = await supabase
+          .from("Usuarios")
+          .select("first_name, last_name")
+          .eq("id", u.id)
+          .single();
+
+        if (!error) setPerfil(perfilData);
+        else setPerfil(null);
+      } else {
+        setPerfil(null);
+      }
     });
 
     return () => {
@@ -34,12 +96,24 @@ export default function App() {
     setAlmacenId(id);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+ const handleLogout = async () => {
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("Error al cerrar sesión:", error);
+  } finally {
     localStorage.removeItem("almacen_id");
-    setUsuario(null);
-    setAlmacenId(null);
-  };
+    // Recarga dura: limpia estado/react y vuelve a montar todo
+    window.location.reload();
+  }
+};
+
+
+  // Inicial del usuario (prioriza first_name; fallback email)
+  const initial = (
+    perfil?.first_name?.[0] ||
+    usuario?.email?.[0] ||
+    "?"
+  ).toUpperCase();
 
   return (
     <Router>
@@ -50,7 +124,9 @@ export default function App() {
             path="/login"
             element={
               <Login
-                onLogin={() => supabase.auth.getUser().then(({ data }) => setUsuario(data.user))}
+                onLogin={() =>
+                  supabase.auth.getUser().then(({ data }) => setUsuario(data.user))
+                }
               />
             }
           />
@@ -60,11 +136,63 @@ export default function App() {
       ) : (
         // Rutas protegidas
         <div className="min-h-screen bg-gray-100 p-[20px]">
-          <div className="flex justify-end">
-            <button className="text-sm text-red-400" onClick={handleLogout}>
-              Cerrar sesión
+          {/* Header */}
+          <div className="flex justify-end mb-2 relative">
+            <button
+              ref={userBtnRef}
+              onClick={() => setOpenUserMenu((v) => !v)}
+              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white font-semibold leading-none select-none shadow hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              aria-haspopup="menu"
+              aria-expanded={openUserMenu}
+              aria-controls="user-menu"
+              title={usuario?.email || "Usuario"}
+            >
+              <span className="uppercase translate-y-[0.5px]">
+                {initial}
+              </span>
             </button>
+
+            {/* Dropdown */}
+            {openUserMenu && (
+              <div
+                ref={userMenuRef}
+                id="user-menu"
+                className="absolute top-12 right-0 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50"
+              >
+                <div className="px-4 py-3 border-b border-gray-100">
+                  <p className="text-sm text-gray-500">Sesión iniciada como</p>
+                  <p className="text-sm font-medium text-gray-700 truncate">
+                    {perfil?.first_name
+                      ? `${perfil.first_name}${perfil.last_name ? " " + perfil.last_name : ""}`
+                      : usuario?.email}
+                  </p>
+                </div>
+                <nav className="py-1 text-sm text-gray-700">
+                  <Link
+                    to="/perfil"
+                    onClick={() => setOpenUserMenu(false)}
+                    className="block px-4 py-2 hover:bg-gray-50"
+                  >
+                    Administrar perfil
+                  </Link>
+                  <Link
+                    to="/almacenes"
+                    onClick={() => setOpenUserMenu(false)}
+                    className="block px-4 py-2 hover:bg-gray-50"
+                  >
+                    Almacenes
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50"
+                  >
+                    Cerrar sesión
+                  </button>
+                </nav>
+              </div>
+            )}
           </div>
+
           <Routes>
             {!almacenId ? (
               <Route
@@ -79,14 +207,8 @@ export default function App() {
             ) : (
               <>
                 <Route path="/" element={<Menu almacenId={almacenId} />} />
-                <Route
-                  path="/compras"
-                  element={<Compras almacenId={almacenId} />}
-                />
-                <Route
-                  path="/ventas"
-                  element={<Ventas almacenId={almacenId} />}
-                />
+                <Route path="/compras" element={<Compras almacenId={almacenId} />} />
+                <Route path="/ventas" element={<Ventas almacenId={almacenId} />} />
                 <Route path="/stock" element={<Stock almacenId={almacenId} />} />
                 <Route
                   path="/almacenes"
@@ -100,6 +222,15 @@ export default function App() {
                 <Route
                   path="/compartir-permiso"
                   element={<CompartirPermiso almacenId={almacenId} />}
+                />
+                {/* Placeholder de Perfil */}
+                <Route
+                  path="/perfil"
+                  element={
+                    <div className="max-w-lg mx-auto p-6 bg-white rounded-2xl shadow-xl">
+                      Pantalla de perfil (en construcción)
+                    </div>
+                  }
                 />
                 <Route path="*" element={<Navigate to="/" />} />
               </>

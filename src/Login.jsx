@@ -6,16 +6,16 @@ import { sendCodeEmail } from "./utils/sendEmail";
 
 export default function Login({ onLogin }) {
   const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [lastName, setLastName]   = useState("");
+  const [email, setEmail]         = useState("");
+  const [password, setPassword]   = useState("");
   const [registrando, setRegistrando] = useState(false);
-  const [mensaje, setMensaje] = useState("");
+  const [mensaje, setMensaje]     = useState("");
+  const [loading, setLoading]     = useState(false);
 
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Resetear campos al cambiar modo
     setFirstName("");
     setLastName("");
     setEmail("");
@@ -23,12 +23,24 @@ export default function Login({ onLogin }) {
     setMensaje("");
   }, [registrando]);
 
+  const upsertVerificacion = async ({ email, codigo }) => {
+    // Graba o actualiza por PK (email)
+    const { error } = await supabase
+      .from("Verificaciones")
+      .upsert({
+        email,
+        codigo,
+        creado_en: new Date().toISOString(),
+      }, { onConflict: "email" });
+
+    if (error) throw error;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setMensaje("");
 
     if (registrando) {
-      // Validación básica de inputs
       if (!firstName.trim() || !lastName.trim()) {
         setMensaje("Ingrese nombre y apellido.");
         return;
@@ -37,44 +49,42 @@ export default function Login({ onLogin }) {
         setMensaje("Ingrese un correo válido antes de solicitar el código.");
         return;
       }
+      if (!password) {
+        setMensaje("Ingrese una contraseña.");
+        return;
+      }
 
       try {
+        setLoading(true);
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
 
-        // Guardar o actualizar el código en la tabla Verificaciones
-        await supabase
-          .from("Verificaciones")
-          .upsert({
-            email,
-            codigo,
-            creado_en: new Date().toISOString()
-          }, { onConflict: ['email'] });
+        // 1) Guardar/actualizar código en Verificaciones
+        await upsertVerificacion({ email, codigo });
 
-        console.log("Email para verificación:", email);
-        console.log("Código generado:", codigo);
-
-        // Enviar código por email
+        // 2) Enviar email con el código
         await sendCodeEmail(email, codigo);
-        console.log("sendCodeEmail: OK");
 
-        // Guardar datos temporales
+        // 3) Guardar datos temporales y navegar a Verificar
         localStorage.setItem("temp_password", password);
         localStorage.setItem("temp_firstName", firstName);
         localStorage.setItem("temp_lastName", lastName);
 
-        // Redirigir a Verificar
         navigate(`/verificar?email=${encodeURIComponent(email)}`);
       } catch (error) {
         console.error("Error en registro inicial:", error);
         setMensaje(error.message || "No se pudo procesar el registro");
+      } finally {
+        setLoading(false);
       }
     } else {
-      // Login estándar: requiere usuario ya creado por verificación
+      // Login estándar
+      setLoading(true);
       const { error } = await supabase.auth.signInWithPassword({ email, password });
+      setLoading(false);
       if (error) {
         setMensaje(`Error: ${error.message}`);
       } else {
-        onLogin();
+        onLogin?.();
         navigate("/");
       }
     }
@@ -127,12 +137,17 @@ export default function Login({ onLogin }) {
           className="w-full h-[52px] px-4 text-base border border-gray-300 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-blue-400"
           required
         />
+
         <button
           type="submit"
-          className="w-full h-[52px] bg-blue-600 text-white rounded-[12px] hover:bg-blue-700 transition"
+          disabled={loading}
+          className="w-full h-[52px] bg-blue-600 text-white rounded-[12px] hover:bg-blue-700 transition disabled:opacity-50"
         >
-          {registrando ? "Registrarse" : "Iniciar Sesión"}
+          {loading
+            ? (registrando ? "Enviando código..." : "Ingresando...")
+            : (registrando ? "Registrarse" : "Iniciar Sesión")}
         </button>
+
         <button
           type="button"
           onClick={() => setRegistrando(!registrando)}
@@ -142,6 +157,7 @@ export default function Login({ onLogin }) {
             ? "¿Ya tenés una cuenta? Iniciar sesión"
             : "¿No tenés cuenta? Registrate"}
         </button>
+
         {mensaje && <p className="text-center text-red-500 text-sm">{mensaje}</p>}
       </form>
     </div>

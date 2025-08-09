@@ -9,6 +9,7 @@ export default function Stock() {
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState("");
   const [soloConVencimiento, setSoloConVencimiento] = useState(false);
   const [ordenarPorVencimiento, setOrdenarPorVencimiento] = useState(false);
+  const [mostrarFiltros, setMostrarFiltros] = useState(false);
 
   const navigate = useNavigate();
   const almacen_id = localStorage.getItem('almacen_id');
@@ -31,14 +32,13 @@ export default function Stock() {
         return;
       }
 
-      // 2) Si no hay productos, listo
       if (!stock || stock.length === 0) {
         setProductos([]);
         setCategorias([]);
         return;
       }
 
-      // 3) Traer lotes con fecha_vencimiento y cantidad > 0 para esos stock_id
+      // 2) Traer lotes con fecha_vencimiento y cantidad > 0
       const stockIds = stock.map(s => s.id);
       const { data: lotes, error: lotesErr } = await supabase
         .from('Lotes')
@@ -52,30 +52,25 @@ export default function Stock() {
         console.error('Error al cargar lotes', lotesErr);
       }
 
-      // 4) Calcular la próxima fecha de vencimiento por stock_id (min fecha)
+      // 3) Próxima fecha de vencimiento por stock
       const minVencPorStock = new Map();
       if (lotes && lotes.length > 0) {
         for (const l of lotes) {
           const f = l.fecha_vencimiento; // 'YYYY-MM-DD'
-          if (!minVencPorStock.has(l.stock_id)) {
+          if (!minVencPorStock.has(l.stock_id) || f < minVencPorStock.get(l.stock_id)) {
             minVencPorStock.set(l.stock_id, f);
-          } else {
-            // mantener la menor
-            if (f < minVencPorStock.get(l.stock_id)) {
-              minVencPorStock.set(l.stock_id, f);
-            }
           }
         }
       }
 
-      // 5) Mezclar al resultado
+      // 4) Mezcla
       const enriquecidos = stock.map(s => ({
         ...s,
         proxima_vencimiento: minVencPorStock.get(s.id) || null,
       }));
       setProductos(enriquecidos);
 
-      // 6) Categorías únicas
+      // 5) Categorías únicas
       const categoriasUnicas = [...new Set(enriquecidos.map(p => p.categoria).filter(Boolean))];
       setCategorias(categoriasUnicas);
     };
@@ -98,91 +93,119 @@ export default function Stock() {
       const fa = a.proxima_vencimiento;
       const fb = b.proxima_vencimiento;
       if (fa && fb) return fa < fb ? -1 : fa > fb ? 1 : 0;
-      if (fa && !fb) return -1; // con fecha primero
-      if (!fa && fb) return 1;  // sin fecha al final
+      if (fa && !fb) return -1;
+      if (!fa && fb) return 1;
       return 0;
     });
   }
 
   return (
-    <div className="max-w-2xl mx-auto mt-8 p-4 bg-white shadow rounded">
-      <Link
-        to="/"
-        className="inline-block text-sm text-blue-500 px-4 py-2 rounded-lg hover:bg-blue-600 hover:text-white transition"
-      >
-        Volver al menú
-      </Link>
+    <div className="bg-gray-100 px-4 py-6 flex justify-center">
+      <div className="w-full sm:max-w-2xl mx-auto bg-white shadow-xl rounded-2xl p-6 space-y-6">
+        <Link
+          to="/"
+          className="inline-block text-sm text-blue-500 px-4 py-2 rounded-lg hover:bg-blue-600 hover:text-white transition"
+        >
+          ← Volver al menú
+        </Link>
 
-      <h2 className="text-xl font-bold mb-2">Stock Actual</h2>
-
-      {/* Filtros */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        {/* Categoría */}
-        <div>
-          <label className="block mb-1 text-sm text-gray-700">Filtrar por categoría:</label>
-          <select
-            value={categoriaSeleccionada}
-            onChange={(e) => setCategoriaSeleccionada(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-gray-700">Stock Actual</h2>
+          <button
+            onClick={() => setMostrarFiltros(v => !v)}
+            className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+            aria-expanded={mostrarFiltros}
+            aria-controls="panel-filtros"
           >
-            <option value="">Todas</option>
-            {categorias.map((cat) => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
+            {mostrarFiltros ? "Ocultar filtros" : "Mostrar filtros"}
+          </button>
         </div>
 
-        {/* Solo con vencimiento */}
-        <div>
-          <label className="block mb-1 text-sm text-gray-700">Vencimiento:</label>
-          <div className="flex items-center h-10 gap-2">
-            <input
-              id="soloConVto"
-              type="checkbox"
-              checked={soloConVencimiento}
-              onChange={(e) => setSoloConVencimiento(e.target.checked)}
-            />
-            <label htmlFor="soloConVto" className="text-sm text-gray-700">Solo con fecha de vencimiento</label>
+        {/* Panel de filtros (colapsable) */}
+        {mostrarFiltros && (
+          <div id="panel-filtros" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Categoría */}
+            <div>
+              <label className="block mb-1 text-sm text-gray-700">Categoría</label>
+              <select
+                value={categoriaSeleccionada}
+                onChange={(e) => setCategoriaSeleccionada(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-700"
+              >
+                <option value="">Todas</option>
+                {categorias.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Solo con vencimiento */}
+            <div>
+              <label className="block mb-1 text-sm text-gray-700">Vencimiento</label>
+              <div className="flex items-center h-10 gap-2">
+                <input
+                  id="soloConVto"
+                  type="checkbox"
+                  checked={soloConVencimiento}
+                  onChange={(e) => setSoloConVencimiento(e.target.checked)}
+                />
+                <label htmlFor="soloConVto" className="text-sm text-gray-700">
+                  Solo con fecha de vencimiento
+                </label>
+              </div>
+            </div>
+
+            {/* Ordenar por próximos a vencer */}
+            <div>
+              <label className="block mb-1 text-sm text-gray-700">Orden</label>
+              <div className="flex items-center h-10 gap-2">
+                <input
+                  id="ordenVto"
+                  type="checkbox"
+                  checked={ordenarPorVencimiento}
+                  onChange={(e) => setOrdenarPorVencimiento(e.target.checked)}
+                />
+                <label htmlFor="ordenVto" className="text-sm text-gray-700">
+                  Próximos a vencer primero
+                </label>
+              </div>
+            </div>
           </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm text-gray-700">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="px-4 py-2 border">Producto</th>
+                <th className="px-4 py-2 border">Cantidad</th>
+                <th className="px-4 py-2 border">Categoría</th>
+                <th className="px-4 py-2 border">Próx. vencimiento</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productosFiltrados.map((p) => (
+                <tr key={p.id} className="odd:bg-white even:bg-gray-50">
+                  <td className="border px-4 py-2">{p.nombre}</td>
+                  <td className="border px-4 py-2">{p.cantidad}</td>
+                  <td className="border px-4 py-2">{p.categoria || "-"}</td>
+                  <td className="border px-4 py-2">
+                    {p.proxima_vencimiento ? p.proxima_vencimiento : "-"}
+                  </td>
+                </tr>
+              ))}
+              {productosFiltrados.length === 0 && (
+                <tr>
+                  <td colSpan="4" className="text-center text-gray-500 px-4 py-6">
+                    No hay productos para mostrar.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
 
-        {/* Ordenar por próximos a vencer */}
-        <div>
-          <label className="block mb-1 text-sm text-gray-700">Ordenar:</label>
-          <div className="flex items-center h-10 gap-2">
-            <input
-              id="ordenVto"
-              type="checkbox"
-              checked={ordenarPorVencimiento}
-              onChange={(e) => setOrdenarPorVencimiento(e.target.checked)}
-            />
-            <label htmlFor="ordenVto" className="text-sm text-gray-700">Próximos a vencer primero</label>
-          </div>
-        </div>
       </div>
-
-      <table className="table-auto w-full text-gray-500">
-        <thead>
-          <tr>
-            <th className="px-4 py-2 border">Producto</th>
-            <th className="px-4 py-2 border">Cantidad</th>
-            <th className="px-4 py-2 border">Categoría</th>
-            <th className="px-4 py-2 border">Próx. vencimiento</th>
-          </tr>
-        </thead>
-        <tbody>
-          {productosFiltrados.map((p) => (
-            <tr key={p.id}>
-              <td className="border px-4 py-2">{p.nombre}</td>
-              <td className="border px-4 py-2">{p.cantidad}</td>
-              <td className="border px-4 py-2">{p.categoria || "-"}</td>
-              <td className="border px-4 py-2">
-                {p.proxima_vencimiento ? p.proxima_vencimiento : "-"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
