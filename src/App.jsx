@@ -9,6 +9,7 @@ import Compras from "./Compras";
 import Ventas from "./Ventas";
 import Stock from "./Stock";
 import Almacenes from "./Almacenes";
+import Historial from "./Historial";
 import CompartirPermiso from "./CompartirPermiso";
 import Perfil from "./Perfil"; // ✅ import del perfil real
 
@@ -159,6 +160,7 @@ export default function App() {
                     />
                   }
                 />
+                <Route path="/historial" element={<Historial almacenId={almacenId} />} />
                 <Route
                   path="/compartir-permiso"
                   element={<CompartirPermiso almacenId={almacenId} />}

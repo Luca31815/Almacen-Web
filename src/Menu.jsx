@@ -1,6 +1,7 @@
+// Menu.jsx
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { FaBoxOpen, FaCartPlus, FaCashRegister, FaWarehouse } from "react-icons/fa";
+import { FaBoxOpen, FaCartPlus, FaCashRegister, FaHistory } from "react-icons/fa"; // <- usamos FaHistory
 import { supabase } from "./supabase";
 
 export default function Menu() {
@@ -32,20 +33,22 @@ export default function Menu() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col items-center bg-gray-100 px-4 py-10 ">
+    <div className="min-h-screen flex flex-col items-center bg-gray-100 px-4 py-10">
       {/* Título dinámico con nombre del almacén */}
       <h1 className="text-3xl font-bold mb-8 text-gray-800">{nombreAlmacen}</h1>
 
       <div className="bg-white rounded-2xl p-6 w-full max-w-screen-xl shadow-md">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-          {/* Administrar Almacenes - Estilo igual a los otros */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+          {/* Historial (reemplaza a Almacenes) */}
           <Link
-            to="/almacenes"
+            to="/historial"
             className="bg-purple-100 rounded-2xl p-6 flex flex-col items-center justify-center hover:bg-purple-200 transition cursor-pointer"
           >
-            <FaWarehouse className="text-purple-600 text-5xl mb-3" />
-            <h2 className="text-xl font-semibold text-gray-800">Almacenes</h2>
-            <p className="text-sm text-gray-600 mt-1 text-center">Administrar tus almacenes</p>
+            <FaHistory className="text-purple-600 text-5xl mb-3" />
+            <h2 className="text-xl font-semibold text-gray-800">Historial</h2>
+            <p className="text-sm text-gray-600 mt-1 text-center">
+              Compras y ventas + gasto mensual
+            </p>
           </Link>
 
           <Link
