@@ -39,7 +39,8 @@ export default function Ventas() {
       const { data, error } = await supabase
         .from("Stock")
         .select("nombre")
-        .eq("almacen_id", almacenId);
+        .eq("almacen_id", almacenId)
+        .eq("activo", true);                     // ← FILTRO: solo activos
       if (!error && data) setProductosStock(data.map((p) => p.nombre));
     };
     cargarProductos();
@@ -60,6 +61,7 @@ export default function Ventas() {
         .select("id, cantidad")
         .eq("nombre", nombre)
         .eq("almacen_id", almacenId)
+        .eq("activo", true)                      // ← FILTRO: solo activos
         .single();
 
       if (!error && data) {

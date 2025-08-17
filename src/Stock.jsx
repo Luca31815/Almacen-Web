@@ -26,8 +26,8 @@ export default function Stock() {
 
   // UNDO
   // lastAction = {
-  //   type:'delete'|'update'|'bulk_update',
-  //   items:[{id, prev, next}],
+  //   type:'archive'|'update'|'bulk_update',
+  //   items:[{id, prev, next, row?}],
   //   lotes?: [{ stockId, changes:[{ id, prev:{fecha,cantidad}, next:{fecha,cantidad} }] }]
   // }
   const [lastAction, setLastAction] = useState(null);
@@ -59,10 +59,12 @@ export default function Stock() {
 
     const fetchStock = async () => {
       setErr(""); setMsg("");
+      // Solo activos
       const { data: stock, error } = await supabase
         .from("Stock")
-        .select("id, nombre, cantidad, categoria, almacen_id")
-        .eq("almacen_id", almacen_id);
+        .select("id, nombre, cantidad, categoria, almacen_id, activo")
+        .eq("almacen_id", almacen_id)
+        .eq("activo", true);
 
       if (error) {
         setErr(error.message || "Error al cargar stock.");
@@ -165,14 +167,11 @@ export default function Stock() {
       return an === bn ? 0 : an < bn ? -1 : 1;
     }
     if (key === "proxima_vencimiento") {
-      // nulls al final en asc, al principio en desc
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
-      // YYYY-MM-DD lexicográfico sirve
       return av < bv ? -1 : av > bv ? 1 : 0;
     }
-    // strings
     const as = String(av ?? "").toLowerCase();
     const bs = String(bv ?? "").toLowerCase();
     return as === bs ? 0 : as < bs ? -1 : 1;
@@ -186,14 +185,12 @@ export default function Stock() {
 
     if (soloConVencimiento) list = list.filter((p) => p.proxima_vencimiento !== null);
 
-    // Orden por encabezado, si está activo
     if (sort.key) {
       list = [...list].sort((a, b) => {
         const r = cmp(a, b, sort.key);
         return sort.dir === "asc" ? r : -r;
       });
     } else if (ordenarPorVencimiento) {
-      // Orden rápido previo
       list = [...list].sort((a, b) => {
         const fa = a.proxima_vencimiento;
         const fb = b.proxima_vencimiento;
@@ -240,17 +237,23 @@ export default function Stock() {
     });
   };
 
-  // Borrar masivo
+  // ARCHIVAR masivo (soft delete)
   const handleDeleteSelected = async () => {
     setMsg(""); setErr("");
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
-    if (!window.confirm(`¿Eliminar ${ids.length} producto(s) seleccionados? Esta acción no se puede deshacer.`)) return;
+    if (!window.confirm(`¿Archivar ${ids.length} producto(s) seleccionados? Podés deshacer desde el botón "Deshacer".`)) return;
 
     setDeleting(true);
     try {
-      const rowsToDelete = productos.filter((p) => selectedIds.has(p.id));
-      const { error } = await supabase.from("Stock").delete().in("id", ids).eq("almacen_id", almacen_id);
+      const rowsToArchive = productos.filter((p) => selectedIds.has(p.id));
+      const nowIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("Stock")
+        .update({ activo: false, eliminado_en: nowIso })
+        .in("id", ids)
+        .eq("almacen_id", almacen_id);
       if (error) throw error;
 
       setProductos((prev) => prev.filter((p) => !selectedIds.has(p.id)));
@@ -260,31 +263,37 @@ export default function Stock() {
         for (const id of ids) n.delete(id);
         return n;
       });
-      setMsg("Productos eliminados correctamente.");
-      setLastAction({ type: "delete", items: rowsToDelete.map((r) => ({ row: { ...r } })) });
+      setMsg("Productos archivados correctamente.");
+      setLastAction({ type: "archive", items: rowsToArchive.map((r) => ({ row: { ...r } })) });
     } catch (e) {
-      setErr(e.message || "No se pudieron eliminar los productos seleccionados.");
+      setErr(e.message || "No se pudieron archivar los productos seleccionados.");
     } finally {
       setDeleting(false);
     }
   };
 
-  // Borrar por fila
+  // ARCHIVAR por fila (soft delete)
   const handleDeleteOne = async (id, nombre) => {
     setMsg(""); setErr("");
-    if (!window.confirm(`¿Eliminar "${nombre}"? Esta acción no se puede deshacer.`)) return;
+    if (!window.confirm(`¿Archivar "${nombre}"? Podés deshacer desde el botón "Deshacer".`)) return;
     try {
       const row = productos.find((p) => p.id === id);
-      const { error } = await supabase.from("Stock").delete().eq("id", id).eq("almacen_id", almacen_id);
+      const nowIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("Stock")
+        .update({ activo: false, eliminado_en: nowIso })
+        .eq("id", id)
+        .eq("almacen_id", almacen_id);
       if (error) throw error;
 
       setProductos((prev) => prev.filter((p) => p.id !== id));
       setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
       setExpanded((prev) => { const n = new Set(prev); n.delete(id); return n; });
-      setMsg("Producto eliminado.");
-      setLastAction({ type: "delete", items: [{ row: { ...row } }] });
+      setMsg("Producto archivado.");
+      setLastAction({ type: "archive", items: [{ row: { ...row } }] });
     } catch (e) {
-      setErr(e.message || "No se pudo eliminar el producto.");
+      setErr(e.message || "No se pudo archivar el producto.");
     }
   };
 
@@ -428,9 +437,7 @@ export default function Stock() {
         }
 
         if (anyLoteChange) {
-          // filtrar lotes en memoria que queden > 0
           const filtered = newLs.filter(x => Number(x.cantidad) > 0);
-          // cantidad total
           const newTotal = filtered.reduce((acc, x) => acc + Number(x.cantidad || 0), 0);
           const { error: upStockErr } = await supabase
             .from("Stock")
@@ -447,7 +454,6 @@ export default function Stock() {
         }
       }
 
-      // Registrar UNDO (producto + lotes)
       setLastAction({
         type: "update",
         items: [{ id, prev: prodPrev, next: prodNext }],
@@ -499,25 +505,50 @@ export default function Stock() {
     }
   };
 
-  // UNDO (productos + lotes)
+  // UNDO (archive + updates + lotes)
   const handleUndo = async () => {
     if (!lastAction) return;
     setErr(""); setMsg("");
 
     try {
-      if (lastAction.type === "delete") {
-        const rows = lastAction.items.map(({ row }) => ({
-          id: row.id, nombre: row.nombre, cantidad: row.cantidad, categoria: row.categoria, almacen_id: row.almacen_id,
-        }));
-        const { error } = await supabase.from("Stock").insert(rows);
+      if (lastAction.type === "archive") {
+        // Restaurar activos
+        const rows = lastAction.items.map(({ row }) => row);
+        const ids = rows.map((r) => r.id);
+        const { error } = await supabase
+          .from("Stock")
+          .update({ activo: true, eliminado_en: null })
+          .in("id", ids)
+          .eq("almacen_id", almacen_id);
         if (error) throw error;
 
+        // Volver a mostrar en UI
         setProductos((prev) => {
-          const ids = new Set(rows.map((r) => r.id));
-          const restored = rows.map((r) => ({ ...r, proxima_vencimiento: null }));
-          return [...prev.filter((p) => !ids.has(p.id)), ...restored].sort((a, b) => Number(a.id) - Number(b.id));
+          const existingIds = new Set(prev.map(p => p.id));
+          const restored = rows
+            .filter(r => !existingIds.has(r.id))
+            .map((r) => ({ ...r })); // proxima_vencimiento se recalcula abajo si hace falta
+
+          const merged = [...prev, ...restored];
+          return merged;
         });
-        setMsg("Deshacer: productos restaurados (los lotes no se restauran).");
+
+        // Recalcular próxima fecha para restaurados si tenemos lotes en memoria
+        for (const r of rows) {
+          const ls = lotesMap[r.id] || [];
+          const min = (() => {
+            const filtered = (ls || []).filter(x => Number(x.cantidad) > 0);
+            let m = null;
+            for (const l of filtered) {
+              if (!l.fecha_vencimiento) continue;
+              if (m === null || l.fecha_vencimiento < m) m = l.fecha_vencimiento;
+            }
+            return m;
+          })();
+          setProductos((prev) => prev.map((p) => (p.id === r.id ? { ...p, proxima_vencimiento: min } : p)));
+        }
+
+        setMsg("Deshacer: productos restaurados (lotes intactos).");
       }
 
       if (lastAction.type === "update" || lastAction.type === "bulk_update") {
@@ -659,10 +690,10 @@ export default function Stock() {
                   ? "bg-gray-200 text-gray-500 cursor-not-allowed"
                   : "bg-red-600 hover:bg-red-700 text-white")
               }
-              title="Eliminar seleccionados"
+              title="Archivar seleccionados"
             >
               <FaTrash />
-              <span className="hidden sm:inline">&nbsp;Eliminar seleccionados</span>
+              <span className="hidden sm:inline">&nbsp;Archivar seleccionados</span>
             </button>
 
             <button
@@ -749,7 +780,7 @@ export default function Stock() {
                 placeholder="Cantidad"
                 value={bulkCantidad}
                 onChange={(e) => setBulkCantidad(e.target.value)}
-                className="px-3 py-2 border rounded-lg w-full sm:w-auto min-w-0 bg-white text-gray-900 border-gray-300"
+                className="px-3 py-2 border rounded-lg w/full sm:w-auto min-w-0 bg-white text-gray-900 border-gray-300"
               />
             )}
 
@@ -885,10 +916,10 @@ export default function Stock() {
                             <button
                               onClick={() => handleDeleteOne(p.id, p.nombre)}
                               className="inline-flex items-center gap-2 px-2.5 py-2 sm:px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm whitespace-nowrap"
-                              title="Eliminar"
+                              title="Archivar"
                             >
                               <FaTrash />
-                              <span className="hidden sm:inline">&nbsp;Borrar</span>
+                              <span className="hidden sm:inline">&nbsp;Archivar</span>
                             </button>
                           </div>
                         ) : (

@@ -1,8 +1,9 @@
 // Compras.jsx
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
 import { useToast } from "./ToastProvider";
+import ImportarPDF from "./ImportarPDF";
 
 export default function Compras() {
   const toast = useToast();
@@ -17,6 +18,9 @@ export default function Compras() {
   const [costeUnidad, setCosteUnidad] = useState("");
   const [proveedor, setProveedor] = useState("");
   const [formaPago, setFormaPago] = useState("");
+
+  // EAN del ítem actual
+  const [currentEan, setCurrentEan] = useState("");
 
   // Fechas
   const hoyISO = () => {
@@ -34,6 +38,132 @@ export default function Compras() {
   const [compraActualId, setCompraActualId] = useState(null);
 
   const almacenId = localStorage.getItem("almacen_id");
+
+  // --- Cola de importación desde PDF ---
+  const [importQueue, setImportQueue] = useState([]); // [{nombre, cantidad, precioUnitario, total, ean}, ...]
+  const prevCompraIdRef = useRef(compraActualId);
+
+  // --- Autorrelleno de categoría a partir de nombre/EAN ---
+  const autofillCategoria = useCallback(
+    async (nombreArg, eanArg) => {
+      const n = (nombreArg || "").trim();
+      const e = (eanArg || "").trim();
+      if (!almacenId || (!n && !e)) return;
+
+      // 1) Exacto por nombre
+      try {
+        const { data: byName } = await supabase
+          .from("Stock")
+          .select("id,categoria")
+          .eq("almacen_id", almacenId)
+          .eq("nombre", n)
+          .maybeSingle();
+
+        if (byName && byName.categoria) {
+          setCategoria(byName.categoria);
+          return;
+        }
+      } catch {}
+
+      // 2) Por EAN (si hay columna y valor)
+      if (e) {
+        try {
+          const { data: byEan } = await supabase
+            .from("Stock")
+            .select("id,categoria")
+            .eq("almacen_id", almacenId)
+            .eq("ean", e)
+            .maybeSingle();
+
+          if (byEan && byEan.categoria) {
+            setCategoria(byEan.categoria);
+            return;
+          }
+        } catch {}
+      }
+
+      // 3) Fallback aproximado
+      if (n && n.length >= 4) {
+        try {
+          const { data: approx } = await supabase
+            .from("Stock")
+            .select("id,categoria")
+            .eq("almacen_id", almacenId)
+            .ilike("nombre", `%${n}%`)
+            .limit(1);
+
+          if (approx && approx.length && approx[0]?.categoria) {
+            setCategoria(approx[0].categoria);
+          }
+        } catch {}
+      }
+    },
+    [almacenId]
+  );
+
+  // helper para inyectar una fila en los inputs
+  const injectRowToInputs = useCallback(
+    (row) => {
+      if (!row) return;
+      const qty = Number.isFinite(Number(row.cantidad))
+        ? Math.max(0, Math.floor(Number(row.cantidad)))
+        : row.total && row.precioUnitario
+        ? Math.max(0, Math.floor(Number(row.total / row.precioUnitario)))
+        : 0;
+      const cost = Number.isFinite(Number(row.precioUnitario))
+        ? Math.max(0, Number(row.precioUnitario))
+        : qty > 0 && row.total
+        ? Math.max(0, Number(row.total) / qty)
+        : 0;
+
+      setNombre(row.nombre || "");
+      setCantidad(String(qty));
+      setCosteUnidad(String(cost));
+      setCurrentEan(row.ean || "");
+      if (row.nombre || row.ean) autofillCategoria(row.nombre, row.ean);
+    },
+    [autofillCategoria]
+  );
+
+  // intenta inyectar el siguiente ítem de la cola (si no hay compra por lotes abierta)
+  const tryInjectNext = useCallback(
+    () => {
+      if (modoLotes && compraActualId) {
+        toast.info("Tenés una compra por lotes abierta. Finalizala para continuar con la importación.");
+        return;
+      }
+      setImportQueue((prev) => {
+        if (prev.length === 0) return prev;
+        const [next, ...rest] = prev;
+        injectRowToInputs(next);
+        if (rest.length === 0) {
+          toast.success("Importación completada. No hay más ítems en la cola.");
+        }
+        return rest;
+      });
+    },
+    [modoLotes, compraActualId, injectRowToInputs, toast]
+  );
+
+  // Omitir el ítem cargado e inyectar el siguiente
+  const handleSkipCurrent = () => {
+    if (modoLotes && compraActualId) {
+      toast.info("Tenés una compra por lotes abierta. Finalizala para continuar.");
+      return;
+    }
+    if (importQueue.length === 0) {
+      toast.info("No hay más ítems en la cola.");
+      return;
+    }
+    tryInjectNext();
+  };
+
+  // Cancelar toda la cola de importación
+  const handleCancelImport = () => {
+    if (importQueue.length === 0) return;
+    setImportQueue([]);
+    toast.success("Importación cancelada.");
+  };
 
   // --- RELOAD de listas (productos, categorías, proveedores) ---
   const reloadLookups = useCallback(async () => {
@@ -73,21 +203,34 @@ export default function Compras() {
     reloadLookups();
   }, [reloadLookups]);
 
+  // Reanudar cola al cerrar compra por lotes
+  useEffect(() => {
+    const prev = prevCompraIdRef.current;
+    const justClosed = prev && !compraActualId;
+    if (justClosed && importQueue.length > 0) {
+      setTimeout(() => {
+        tryInjectNext();
+      }, 0);
+    }
+    prevCompraIdRef.current = compraActualId;
+  }, [compraActualId, importQueue.length, tryInjectNext]);
+
   const limpiarTodo = () => {
     setNombre("");
     setCategoria("");
     setCantidad("");
     setCosteUnidad("");
-    setProveedor("");
-    setFormaPago("");
+    // NO tocar proveedor/formaPago: se mantienen para toda la factura/importación
     setFechaCompra(hoyISO());
     setFechaVencimiento("");
     setCompraActualId(null);
+    setCurrentEan("");
   };
 
   const finalizarCompra = () => {
     setCompraActualId(null);
     limpiarTodo();
+    tryInjectNext();
   };
 
   const guardarCompra = async () => {
@@ -148,24 +291,48 @@ export default function Compras() {
         }
       }
 
-      // 2) Obtener/crear producto en Stock
+      // 2) Obtener/crear producto en Stock (preferir EAN)
       let stockId = null;
       let cantidadActual = 0;
 
-      const { data: prodExistente, error: prodSelError } = await supabase
-        .from("Stock")
-        .select("id, cantidad")
-        .eq("nombre", nombre)
-        .eq("almacen_id", almacenId)
-        .single();
+      let stockRow = null;
 
-      if (!prodSelError && prodExistente) {
-        stockId = prodExistente.id;
-        cantidadActual = prodExistente.cantidad || 0;
+      // 2.a) si tengo EAN, intento por EAN
+      if (currentEan) {
+        const { data: byEan, error: errEan } = await supabase
+          .from("Stock")
+          .select("id,cantidad,categoria,ean")
+          .eq("almacen_id", almacenId)
+          .eq("ean", currentEan)
+          .maybeSingle();
+        if (!errEan && byEan) stockRow = byEan;
+      }
+
+      // 2.b) si no encontré por EAN, busco por nombre
+      if (!stockRow) {
+        const { data: byName, error: errName } = await supabase
+          .from("Stock")
+          .select("id,cantidad,categoria,ean")
+          .eq("almacen_id", almacenId)
+          .eq("nombre", nombre)
+          .maybeSingle();
+        if (!errName && byName) stockRow = byName;
+      }
+
+      if (stockRow) {
+        stockId = stockRow.id;
+        cantidadActual = stockRow.cantidad || 0;
+
+        // si el producto existe pero NO tiene ean y ahora lo tenemos, lo completamos
+        const updatePayload = {
+          cantidad: cantidadActual + cantidadNumero,
+          categoria,
+          ...(currentEan && !stockRow.ean ? { ean: currentEan } : {}),
+        };
 
         const { error: updError } = await supabase
           .from("Stock")
-          .update({ cantidad: cantidadActual + cantidadNumero, categoria })
+          .update(updatePayload)
           .eq("id", stockId);
 
         if (updError) {
@@ -174,6 +341,7 @@ export default function Compras() {
           return;
         }
       } else {
+        // 2.c) no existe: crear con ean
         const { data: nuevoStock, error: insStockError } = await supabase
           .from("Stock")
           .insert([
@@ -182,6 +350,7 @@ export default function Compras() {
               cantidad: cantidadNumero,
               categoria,
               almacen_id: almacenId,
+              ean: currentEan || null,
             },
           ])
           .select("id")
@@ -195,7 +364,7 @@ export default function Compras() {
         stockId = nuevoStock.id;
       }
 
-      // 3) Insertar Lote
+      // 3) Insertar Lote (guardando ean también)
       const lote = {
         stock_id: stockId,
         cantidad: cantidadNumero,
@@ -203,6 +372,7 @@ export default function Compras() {
         fecha_compra: fechaCompra,
         fecha_vencimiento: fechaVencimiento || null,
         compra_id: compraId,
+        ean: currentEan || null,
       };
 
       const { error: loteError } = await supabase.from("Lotes").insert([lote]);
@@ -212,10 +382,10 @@ export default function Compras() {
         return;
       }
 
-      // 4) Reload de listas para que aparezcan los nuevos en los datalist/select
+      // 4) Reload de listas para datalists
       await reloadLookups();
 
-      // 5) Limpieza según modo
+      // 5) Limpieza / avanzar cola
       if (modoLotes) {
         setCantidad("");
         setFechaVencimiento("");
@@ -223,9 +393,10 @@ export default function Compras() {
       } else {
         limpiarTodo();
         toast.success("Compra guardada correctamente.");
+        tryInjectNext();
       }
 
-      // 6) Enriquecer proveedores locales si hay uno nuevo (por UX)
+      // 6) Enriquecer proveedores locales si hay uno nuevo
       if (proveedor && !proveedores.includes(proveedor)) {
         setProveedores((prev) => {
           const next = [...prev, proveedor.trim()].filter(Boolean);
@@ -257,6 +428,63 @@ export default function Compras() {
         <h1 className="text-2xl text-gray-700 font-bold text-center">
           Cargar Compra
         </h1>
+        <div className="flex items-center justify-end gap-2">
+          <ImportarPDF
+            onPick={({ nombre, cantidad, costoUnidad, ean }) => {
+              setNombre(nombre || "");
+              const qty = Number.isFinite(Number(cantidad)) ? Math.max(0, Math.floor(Number(cantidad))) : 0;
+              const cost = Number.isFinite(Number(costoUnidad)) ? Math.max(0, Number(costoUnidad)) : 0;
+              setCantidad(String(qty));
+              setCosteUnidad(String(cost));
+              setCurrentEan(ean || "");
+              if (nombre || ean) autofillCategoria(nombre, ean);
+            }}
+            proveedores={proveedores}
+            proveedorInicial={proveedor}
+            formaPagoInicial={formaPago}
+            onQueue={(rows, meta) => {
+              if (!rows?.length) {
+                toast.error("No hay filas válidas para importar.");
+                return;
+              }
+              if (meta?.proveedor !== undefined) setProveedor(meta.proveedor || "");
+              if (meta?.formaPago !== undefined) setFormaPago(meta.formaPago || "");
+
+              setImportQueue(rows);
+
+              if (modoLotes && compraActualId) {
+                toast.info("Cola preparada. Finalizá la compra por lotes actual para continuar.");
+                return;
+              }
+              const [first, ...rest] = rows;
+              injectRowToInputs(first);
+              setImportQueue(rest);
+              toast.success(`Cola de importación lista (${rows.length} ítems).`);
+            }}
+          />
+
+          {importQueue.length > 0 && (
+            <>
+              <span className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-700">
+                En cola: {importQueue.length}
+              </span>
+              <button
+                onClick={handleSkipCurrent}
+                className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200"
+                title="Saltar este item e inyectar el siguiente"
+              >
+                Omitir actual
+              </button>
+              <button
+                onClick={handleCancelImport}
+                className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200"
+                title="Vaciar toda la cola de importación"
+              >
+                Cancelar cola
+              </button>
+            </>
+          )}
+        </div>
 
         {/* Toggle modo lotes */}
         <div className="flex items-center justify-between">
@@ -307,6 +535,9 @@ export default function Compras() {
             placeholder="Producto"
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
+            onBlur={() => {
+              if (nombre) autofillCategoria(nombre, currentEan);
+            }}
             disabled={camposProductoBloqueados}
             title={camposProductoBloqueados ? "Compra abierta: no se puede cambiar el producto hasta finalizar" : ""}
             className={`w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 ${
