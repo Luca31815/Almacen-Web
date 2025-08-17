@@ -346,7 +346,7 @@ export default function ImportarPDF({
           setPagoValue(formaPagoInicial || "");
           setOpen(true);
         }}
-        className="text-sm px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200"
+        className="text-sm text-gray-800 px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200"
       >
         Importar desde PDF (beta)
       </button>
@@ -369,7 +369,7 @@ export default function ImportarPDF({
                 >
                   Descargar CSV
                 </button>
-                <button onClick={() => setOpen(false)} className="text-sm px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200">
+                <button onClick={() => setOpen(false)} className="text-sm text-gray-800 px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200">
                   Cerrar
                 </button>
               </div>
@@ -399,7 +399,7 @@ export default function ImportarPDF({
                 <select
                   value={pagoValue}
                   onChange={(e) => setPagoValue(e.target.value)}
-                  className="w-full px-3 py-2 rounded border border-gray-300 bg-gray-50 text-gray-800"
+                  className="w-full px-3  py-2 rounded border border-gray-300 bg-gray-50 text-gray-800"
                 >
                   <option value="">Seleccionar...</option>
                   <option value="Efectivo">Efectivo</option>
@@ -445,7 +445,7 @@ export default function ImportarPDF({
             <div className="overflow-auto border rounded-xl">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
-                  <tr className="text-left">
+                  <tr className="text-left text-gray-800">
                     <th className="px-3 py-2">EAN</th>
                     <th className="px-3 py-2">Nombre</th>
                     <th className="px-3 py-2">Cantidad</th>
