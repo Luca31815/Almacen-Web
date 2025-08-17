@@ -2,8 +2,11 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
+import { useToast } from "./ToastProvider"; // ← NEW
 
 export default function Ventas() {
+  const toast = useToast(); // ← NEW
+
   const [nombre, setNombre] = useState("");
   const [productosStock, setProductosStock] = useState([]);
 
@@ -67,7 +70,7 @@ export default function Ventas() {
     obtenerStock();
   }, [nombre, almacenId]);
 
-  // Traer lotes con fecha de vencimiento y elegir la más cercana por defecto
+  // Traer lotes (informativo)
   useEffect(() => {
     const obtenerFechasVencimiento = async () => {
       setFechasVencimiento([]);
@@ -84,20 +87,16 @@ export default function Ventas() {
 
       if (error) return;
 
-      // Agrupar por fecha
       const map = new Map();
       for (const l of data || []) {
-        const f = l.fecha_vencimiento; // YYYY-MM-DD
+        const f = l.fecha_vencimiento;
         map.set(f, (map.get(f) || 0) + (l.cantidad || 0));
       }
       let agrupado = Array.from(map.entries()).map(([fecha, cantidad]) => ({ fecha, cantidad }));
-
-      // Asegurar orden ascendente por fecha (por si acaso)
       agrupado.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
 
       setFechasVencimiento(agrupado);
 
-      // Elegir la fecha más cercana a "hoy"
       if (agrupado.length > 0) {
         const toDate = (s) => new Date(`${s}T00:00:00`);
         const today = new Date(hoyISO() + "T00:00:00");
@@ -105,12 +104,8 @@ export default function Ventas() {
         const futuros = agrupado.filter((x) => toDate(x.fecha) >= today);
         let elegida;
         if (futuros.length > 0) {
-          // la más próxima en el futuro/igual a hoy
-          elegida = futuros.reduce((best, x) =>
-            toDate(x.fecha) < toDate(best.fecha) ? x : best
-          );
+          elegida = futuros.reduce((best, x) => (toDate(x.fecha) < toDate(best.fecha) ? x : best));
         } else {
-          // si todas pasaron, elegir la más cercana en el pasado (la más reciente)
           elegida = agrupado[agrupado.length - 1];
         }
         setFechaSeleccionada(elegida.fecha);
@@ -138,19 +133,19 @@ export default function Ventas() {
     const price = parseFloat(precioVenta);
 
     if (!nombre || isNaN(qty) || qty <= 0 || isNaN(price) || price < 0) {
-      alert("Por favor completá todos los campos correctamente.");
+      toast.error("Completá todos los campos correctamente.");
       return;
     }
     if (!almacenId) {
-      alert("No hay almacén seleccionado.");
+      toast.error("No hay almacén seleccionado.");
       return;
     }
     if (!fechaVenta) {
-      alert("Seleccioná la fecha de venta.");
+      toast.error("Seleccioná la fecha de venta.");
       return;
     }
     if (!stockId) {
-      alert("Producto no encontrado en este almacén.");
+      toast.error("Producto no encontrado en este almacén.");
       return;
     }
 
@@ -164,13 +159,13 @@ export default function Ventas() {
         .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
 
       if (lotesErr) {
-        alert("No se pudieron obtener los lotes: " + lotesErr.message);
+        toast.error("No se pudieron obtener los lotes.");
         return;
       }
 
       const totalEnLotes = (lotes || []).reduce((acc, l) => acc + (l.cantidad || 0), 0);
       if (qty > totalEnLotes) {
-        alert(`Stock insuficiente por lotes. Disponible por lotes: ${totalEnLotes}.`);
+        toast.error(`Stock insuficiente por lotes. Disponible: ${totalEnLotes}.`);
         return;
       }
 
@@ -192,7 +187,7 @@ export default function Ventas() {
         .single();
 
       if (ventaErr) {
-        alert("Error al guardar en Ventas: " + ventaErr.message);
+        toast.error("Error al guardar en Ventas.");
         return;
       }
 
@@ -214,7 +209,7 @@ export default function Ventas() {
         .single();
 
       if (viErr) {
-        alert("Error al guardar los items de la venta: " + viErr.message);
+        toast.error("Error al guardar los items de la venta.");
         return;
       }
       const ventaItemId = viIns.id;
@@ -235,7 +230,7 @@ export default function Ventas() {
         };
         const { error: vilErr } = await supabase.from("VentaItemsLotes").insert([vil]);
         if (vilErr) {
-          alert("Error al vincular lote en la venta: " + vilErr.message);
+          toast.error("Error al vincular lote en la venta.");
           return;
         }
 
@@ -244,7 +239,7 @@ export default function Ventas() {
           .update({ cantidad: lote.cantidad - tomar })
           .eq("id", lote.id);
         if (updLoteErr) {
-          alert("Error al actualizar lote: " + updLoteErr.message);
+          toast.error("Error al actualizar lote.");
           return;
         }
 
@@ -258,7 +253,7 @@ export default function Ventas() {
         .update({ cantidad: nuevaCantidad })
         .eq("id", stockId);
       if (updStockErr) {
-        alert("Error al actualizar stock: " + updStockErr.message);
+        toast.error("Error al actualizar stock.");
         return;
       }
 
@@ -273,10 +268,10 @@ export default function Ventas() {
       setFechaSeleccionada("");
       setStockId(null);
 
-      alert("Venta guardada correctamente.");
+      toast.success("Venta guardada correctamente.");
     } catch (e) {
       console.error(e);
-      alert("Ocurrió un error inesperado al guardar la venta.");
+      toast.error("Ocurrió un error inesperado al guardar la venta.");
     }
   };
 

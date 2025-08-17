@@ -11,6 +11,8 @@ import Stock from "./Stock";
 import Almacenes from "./Almacenes";
 import Historial from "./Historial";
 import CompartirPermiso from "./CompartirPermiso";
+import { ToastProvider } from "./ToastProvider";
+
 import Perfil from "./Perfil"; // ✅ import del perfil real
 
 export default function App() {
@@ -70,89 +72,75 @@ export default function App() {
   ).toUpperCase();
 
   return (
-    <Router>
-      {!user ? (
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/verificar" element={<Verificar />} />
-          <Route path="/*" element={<Navigate to="/login" />} />
-        </Routes>
-      ) : (
-        <div className="min-h-screen bg-gray-100 p-[20px]">
-          {/* Header */}
-          <div className="flex justify-end mb-2 relative">
-            <button
-              ref={userBtnRef}
-              onClick={() => setOpenUserMenu((v) => !v)}
-              className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white font-semibold leading-none select-none shadow hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              aria-haspopup="menu"
-              aria-expanded={openUserMenu}
-              aria-controls="user-menu"
-              title={user?.email || "Usuario"}
-            >
-              <span className="uppercase translate-y-[0.5px]">{initial}</span>
-            </button>
-
-            {/* Dropdown */}
-            {openUserMenu && (
-              <div
-                ref={userMenuRef}
-                id="user-menu"
-                className="absolute top-12 right-0 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50"
-              >
-                <div className="px-4 py-3 border-b border-gray-100">
-                  <p className="text-sm text-gray-500">Sesión iniciada como</p>
-                  <p className="text-sm font-medium text-gray-700 truncate">
-                    {profile?.first_name
-                      ? `${profile.first_name}${profile.last_name ? " " + profile.last_name : ""}`
-                      : user?.email}
-                  </p>
-                </div>
-                <nav className="py-1 text-sm text-gray-700">
-                  <Link
-                    to="/perfil"
-                    onClick={() => setOpenUserMenu(false)}
-                    className="block px-4 py-2 hover:bg-gray-50"
-                  >
-                    Administrar perfil
-                  </Link>
-                  <Link
-                    to="/almacenes"
-                    onClick={() => setOpenUserMenu(false)}
-                    className="block px-4 py-2 hover:bg-gray-50"
-                  >
-                    Almacenes
-                  </Link>
-                  <button
-                    onClick={handleLogout}
-                    className="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50"
-                  >
-                    Cerrar sesión
-                  </button>
-                </nav>
-              </div>
-            )}
-          </div>
-
+    <ToastProvider>
+      <Router>
+        {!user ? (
           <Routes>
-            {!almacenId ? (
-              <Route
-                path="/*"
-                element={
-                  <Almacenes
-                    usuario={user}
-                    onSeleccionarAlmacen={handleSeleccionarAlmacen}
-                  />
-                }
-              />
-            ) : (
-              <>
-                <Route path="/" element={<Menu almacenId={almacenId} />} />
-                <Route path="/compras" element={<Compras almacenId={almacenId} />} />
-                <Route path="/ventas" element={<Ventas almacenId={almacenId} />} />
-                <Route path="/stock" element={<Stock almacenId={almacenId} />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/verificar" element={<Verificar />} />
+            <Route path="/*" element={<Navigate to="/login" />} />
+          </Routes>
+        ) : (
+          <div className="min-h-screen bg-gray-100 p-[20px]">
+            {/* Header */}
+            <div className="flex justify-end mb-2 relative">
+              <button
+                ref={userBtnRef}
+                onClick={() => setOpenUserMenu((v) => !v)}
+                className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white font-semibold leading-none select-none shadow hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                aria-haspopup="menu"
+                aria-expanded={openUserMenu}
+                aria-controls="user-menu"
+                title={user?.email || "Usuario"}
+              >
+                <span className="uppercase translate-y-[0.5px]">{initial}</span>
+              </button>
+
+              {/* Dropdown */}
+              {openUserMenu && (
+                <div
+                  ref={userMenuRef}
+                  id="user-menu"
+                  className="absolute top-12 right-0 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50"
+                >
+                  <div className="px-4 py-3 border-b border-gray-100">
+                    <p className="text-sm text-gray-500">Sesión iniciada como</p>
+                    <p className="text-sm font-medium text-gray-700 truncate">
+                      {profile?.first_name
+                        ? `${profile.first_name}${profile.last_name ? " " + profile.last_name : ""}`
+                        : user?.email}
+                    </p>
+                  </div>
+                  <nav className="py-1 text-sm text-gray-700">
+                    <Link
+                      to="/perfil"
+                      onClick={() => setOpenUserMenu(false)}
+                      className="block px-4 py-2 hover:bg-gray-50"
+                    >
+                      Administrar perfil
+                    </Link>
+                    <Link
+                      to="/almacenes"
+                      onClick={() => setOpenUserMenu(false)}
+                      className="block px-4 py-2 hover:bg-gray-50"
+                    >
+                      Almacenes
+                    </Link>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50"
+                    >
+                      Cerrar sesión
+                    </button>
+                  </nav>
+                </div>
+              )}
+            </div>
+
+            <Routes>
+              {!almacenId ? (
                 <Route
-                  path="/almacenes"
+                  path="/*"
                   element={
                     <Almacenes
                       usuario={user}
@@ -160,18 +148,34 @@ export default function App() {
                     />
                   }
                 />
-                <Route path="/historial" element={<Historial almacenId={almacenId} />} />
-                <Route
-                  path="/compartir-permiso"
-                  element={<CompartirPermiso almacenId={almacenId} />}
-                />
-                <Route path="/perfil" element={<Perfil />} /> {/* ✅ perfil real */}
-                <Route path="*" element={<Navigate to="/" />} />
-              </>
-            )}
-          </Routes>
-        </div>
-      )}
-    </Router>
+              ) : (
+                <>
+                  <Route path="/" element={<Menu almacenId={almacenId} />} />
+                  <Route path="/compras" element={<Compras almacenId={almacenId} />} />
+                  <Route path="/ventas" element={<Ventas almacenId={almacenId} />} />
+                  <Route path="/stock" element={<Stock almacenId={almacenId} />} />
+                  <Route
+                    path="/almacenes"
+                    element={
+                      <Almacenes
+                        usuario={user}
+                        onSeleccionarAlmacen={handleSeleccionarAlmacen}
+                      />
+                    }
+                  />
+                  <Route path="/historial" element={<Historial almacenId={almacenId} />} />
+                  <Route
+                    path="/compartir-permiso"
+                    element={<CompartirPermiso almacenId={almacenId} />}
+                  />
+                  <Route path="/perfil" element={<Perfil />} /> {/* ✅ perfil real */}
+                  <Route path="*" element={<Navigate to="/" />} />
+                </>
+              )}
+            </Routes>
+          </div>
+        )}
+      </Router>
+    </ToastProvider>
   );
 }

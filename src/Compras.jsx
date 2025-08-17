@@ -1,13 +1,18 @@
 // Compras.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
+import { useToast } from "./ToastProvider";
 
 export default function Compras() {
+  const toast = useToast();
+
   const [nombre, setNombre] = useState("");
   const [categoria, setCategoria] = useState("");
   const [categoriasStock, setCategoriasStock] = useState([]);
   const [productosStock, setProductosStock] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
+
   const [cantidad, setCantidad] = useState("");
   const [costeUnidad, setCosteUnidad] = useState("");
   const [proveedor, setProveedor] = useState("");
@@ -24,30 +29,49 @@ export default function Compras() {
   const [fechaCompra, setFechaCompra] = useState(hoyISO());
   const [fechaVencimiento, setFechaVencimiento] = useState("");
 
-  // Modo "lotes": misma compra + múltiples vencimientos/cantidades
+  // Modo "lotes"
   const [modoLotes, setModoLotes] = useState(false);
-  const [compraActualId, setCompraActualId] = useState(null); // <-- clave
+  const [compraActualId, setCompraActualId] = useState(null);
 
   const almacenId = localStorage.getItem("almacen_id");
 
-  useEffect(() => {
-    const cargarDatos = async () => {
-      const { data: productos, error: errorProd } = await supabase
-        .from("Stock")
-        .select("nombre, categoria")
-        .eq("almacen_id", almacenId);
+  // --- RELOAD de listas (productos, categorías, proveedores) ---
+  const reloadLookups = useCallback(async () => {
+    if (!almacenId) return;
 
-      if (!errorProd && productos) {
-        setProductosStock(productos.map((p) => p.nombre));
-        const categoriasUnicas = [
-          ...new Set(productos.map((p) => p.categoria).filter(Boolean)),
-        ];
-        setCategoriasStock(categoriasUnicas);
-      }
-    };
+    // Productos + categorías del Stock
+    const { data: productos, error: errorProd } = await supabase
+      .from("Stock")
+      .select("nombre, categoria")
+      .eq("almacen_id", almacenId);
 
-    if (almacenId) cargarDatos();
+    if (!errorProd && productos) {
+      setProductosStock(productos.map((p) => p.nombre));
+      const categoriasUnicas = [
+        ...new Set(productos.map((p) => p.categoria).filter(Boolean)),
+      ];
+      setCategoriasStock(categoriasUnicas);
+    }
+
+    // Proveedores históricos del almacén (desde Compras)
+    const { data: provs, error: provErr } = await supabase
+      .from("Compras")
+      .select("proveedor")
+      .eq("almacen_id", almacenId)
+      .not("proveedor", "is", null)
+      .neq("proveedor", "")
+      .limit(1000);
+
+    if (!provErr && provs) {
+      const unicos = [...new Set(provs.map((r) => (r.proveedor || "").trim()).filter(Boolean))];
+      unicos.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      setProveedores(unicos);
+    }
   }, [almacenId]);
+
+  useEffect(() => {
+    reloadLookups();
+  }, [reloadLookups]);
 
   const limpiarTodo = () => {
     setNombre("");
@@ -63,9 +87,7 @@ export default function Compras() {
 
   const finalizarCompra = () => {
     setCompraActualId(null);
-    // Si querés, podés limpiar todo acá. Por ahora solo cerramos la compra y
-    // dejamos los datos por si querés repetir producto fuera de modo lotes.
-    if (!modoLotes) limpiarTodo();
+    limpiarTodo();
   };
 
   const guardarCompra = async () => {
@@ -81,12 +103,12 @@ export default function Compras() {
       isNaN(costeNumero) ||
       !fechaCompra
     ) {
-      alert("Por favor completá todos los campos correctamente.");
+      toast.error("Completá todos los campos correctamente.");
       return;
     }
 
     if (modoLotes && !fechaVencimiento) {
-      alert("Ingresá la fecha de vencimiento (modo lotes activado).");
+      toast.error("Ingresá la fecha de vencimiento (modo lotes).");
       return;
     }
 
@@ -95,13 +117,10 @@ export default function Compras() {
       let compraId = compraActualId;
 
       if (!modoLotes || !compraActualId) {
-        // Creamos una compra nueva si:
-        // - el modo lotes está apagado, o
-        // - está encendido pero aún no hay compra abierta
         const nuevaCompra = {
           nombre,
           costoUnidad: costeNumero,
-          cantidad: cantidadNumero, // cantidad del primer lote (o única si no hay lotes múltiples)
+          cantidad: cantidadNumero,
           total,
           proveedor,
           formaPago,
@@ -118,13 +137,12 @@ export default function Compras() {
 
         if (comprasError) {
           console.error("Error al guardar compra:", comprasError);
-          alert("Error al guardar en compras: " + comprasError.message);
+          toast.error("Error al guardar en compras.");
           return;
         }
 
         compraId = compraInsert?.id ?? null;
 
-        // Si estamos en modo lotes, dejamos la compra abierta para siguientes lotes
         if (modoLotes && compraId) {
           setCompraActualId(compraId);
         }
@@ -152,7 +170,7 @@ export default function Compras() {
 
         if (updError) {
           console.error("Error al actualizar stock:", updError);
-          alert("Error al actualizar stock: " + updError.message);
+          toast.error("Error al actualizar stock.");
           return;
         }
       } else {
@@ -171,13 +189,13 @@ export default function Compras() {
 
         if (insStockError) {
           console.error("Error al crear producto en stock:", insStockError);
-          alert("Error al crear producto en stock: " + insStockError.message);
+          toast.error("Error al crear producto en stock.");
           return;
         }
         stockId = nuevoStock.id;
       }
 
-      // 3) Insertar Lote (si no hay vencimiento y modoLotes off, se guarda NULL)
+      // 3) Insertar Lote
       const lote = {
         stock_id: stockId,
         cantidad: cantidadNumero,
@@ -190,25 +208,34 @@ export default function Compras() {
       const { error: loteError } = await supabase.from("Lotes").insert([lote]);
       if (loteError) {
         console.error("Error al crear lote:", loteError);
-        alert("La compra se guardó, pero falló al crear el lote: " + loteError.message);
+        toast.error("La compra se guardó, pero falló el lote.");
         return;
       }
 
-      // 4) Limpieza según modo
+      // 4) Reload de listas para que aparezcan los nuevos en los datalist/select
+      await reloadLookups();
+
+      // 5) Limpieza según modo
       if (modoLotes) {
-        // Conservar producto y datos de la compra
         setCantidad("");
         setFechaVencimiento("");
-        // Bloqueamos los campos del producto mientras haya compra abierta (en el UI)
-        alert("Lote agregado. Podés cargar otro vencimiento y cantidad.");
+        toast.success("Lote agregado. Podés cargar otro.");
       } else {
-        // Flujo normal (una compra, un lote)
         limpiarTodo();
-        alert("Compra y lote guardados correctamente.");
+        toast.success("Compra guardada correctamente.");
+      }
+
+      // 6) Enriquecer proveedores locales si hay uno nuevo (por UX)
+      if (proveedor && !proveedores.includes(proveedor)) {
+        setProveedores((prev) => {
+          const next = [...prev, proveedor.trim()].filter(Boolean);
+          next.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+          return [...new Set(next)];
+        });
       }
     } catch (e) {
       console.error(e);
-      alert("Ocurrió un error inesperado.");
+      toast.error("Ocurrió un error inesperado.");
     }
   };
 
@@ -240,7 +267,6 @@ export default function Compras() {
               onChange={(e) => {
                 setModoLotes(e.target.checked);
                 if (!e.target.checked) {
-                  // si apagan el modo, cerramos compra abierta
                   setCompraActualId(null);
                 }
               }}
@@ -254,7 +280,10 @@ export default function Compras() {
                 Compra abierta: #{compraActualId}
               </span>
               <button
-                onClick={finalizarCompra}
+                onClick={() => {
+                  finalizarCompra();
+                  toast.success("Compra finalizada. Ya podés cambiar los datos del producto.");
+                }}
                 className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
                 title="Cerrar compra y desbloquear campos"
               >
@@ -308,20 +337,41 @@ export default function Compras() {
           </datalist>
         </div>
 
-        {/* Cantidad y Coste */}
+        {/* Cantidad y Coste unidad — responsive row */}
         <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
           <input
             type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
             placeholder="Cantidad"
             value={cantidad}
-            onChange={(e) => setCantidad(e.target.value)}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") { setCantidad(""); return; }
+              if (raw.trim().startsWith("-")) { setCantidad("0"); return; }
+              const n = Math.floor(Number(raw));
+              if (!Number.isFinite(n)) { setCantidad(""); return; }
+              setCantidad(String(Math.max(0, n)));
+            }}
             className="flex-1 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-700"
           />
+
           <input
             type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
             placeholder="Coste unidad"
             value={costeUnidad}
-            onChange={(e) => setCosteUnidad(e.target.value)}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") { setCosteUnidad(""); return; }
+              if (raw.trim().startsWith("-")) { setCosteUnidad("0"); return; }
+              const n = Number(raw);
+              if (!Number.isFinite(n)) { setCosteUnidad(""); return; }
+              setCosteUnidad(String(Math.max(0, n)));
+            }}
             disabled={camposProductoBloqueados}
             title={camposProductoBloqueados ? "Compra abierta: no se puede cambiar el costo unitario hasta finalizar" : ""}
             className={`flex-1 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 ${
@@ -329,16 +379,16 @@ export default function Compras() {
             }`}
           />
         </div>
+
         {/* Total calculado */}
         <div className="text-right text-lg font-semibold text-gray-700">
           Total: ${totalCalculado.toFixed(2)}
         </div>
+
         {/* Fechas */}
         <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
           <div className="flex-1">
-            <label className="block text-sm text-gray-600 mb-1">
-              Fecha de compra
-            </label>
+            <label className="block text-sm text-gray-600 mb-1">Fecha de compra</label>
             <input
               type="date"
               value={fechaCompra}
@@ -351,12 +401,9 @@ export default function Compras() {
             />
           </div>
 
-          {/* Fecha de vencimiento habilitada en modo lotes (o podés mostrarla siempre) */}
           {modoLotes && (
             <div className="flex-1">
-              <label className="block text-sm text-gray-600 mb-1">
-                Fecha de vencimiento
-              </label>
+              <label className="block text-sm text-gray-600 mb-1">Fecha de vencimiento</label>
               <input
                 type="date"
                 value={fechaVencimiento}
@@ -368,45 +415,38 @@ export default function Compras() {
           )}
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:space-x-4 sm:space-y-0">
-          {/* Proveedor */}
+        {/* Proveedor (datalist) + Forma de pago */}
+        <div className="flex flex-col sm:flex-row sm:space-x-4 sm:space-y-0 space-y-4">
           <div className="flex-1">
             <label className="block text-sm text-gray-600 mb-1">Proveedor</label>
             <input
+              list="proveedores"
               type="text"
               placeholder="Proveedor"
               value={proveedor}
               onChange={(e) => setProveedor(e.target.value)}
               disabled={camposProductoBloqueados}
-              title={
-                camposProductoBloqueados
-                  ? "Compra abierta: no se puede cambiar el proveedor hasta finalizar"
-                  : ""
-              }
+              title={camposProductoBloqueados ? "Compra abierta: no se puede cambiar el proveedor hasta finalizar" : ""}
               className={`w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                camposProductoBloqueados
-                  ? "opacity-70 cursor-not-allowed"
-                  : "text-gray-700"
+                camposProductoBloqueados ? "opacity-70 cursor-not-allowed" : "text-gray-700"
               }`}
             />
+            <datalist id="proveedores">
+              {proveedores.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
           </div>
 
-          {/* Forma de pago */}
           <div className="flex-1">
             <label className="block text-sm text-gray-600 mb-1">Forma de pago</label>
             <select
               value={formaPago}
               onChange={(e) => setFormaPago(e.target.value)}
               disabled={camposProductoBloqueados}
-              title={
-                camposProductoBloqueados
-                  ? "Compra abierta: no se puede cambiar la forma de pago hasta finalizar"
-                  : ""
-              }
+              title={camposProductoBloqueados ? "Compra abierta: no se puede cambiar la forma de pago hasta finalizar" : ""}
               className={`w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                camposProductoBloqueados
-                  ? "opacity-70 cursor-not-allowed"
-                  : "text-gray-700"
+                camposProductoBloqueados ? "opacity-70 cursor-not-allowed" : "text-gray-700"
               }`}
             >
               <option value="">Seleccionar...</option>
@@ -421,10 +461,6 @@ export default function Compras() {
           </div>
         </div>
 
-
-
-        
-
         {/* Botón Guardar */}
         <div className="flex gap-3">
           <button
@@ -437,7 +473,7 @@ export default function Compras() {
             <button
               onClick={() => {
                 finalizarCompra();
-                alert("Compra finalizada. Ya podés cambiar los datos del producto.");
+                toast.success("Compra finalizada. Ya podés cambiar los datos del producto.");
               }}
               className="px-4 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition"
               title="Cerrar compra abierta"
