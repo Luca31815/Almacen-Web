@@ -2,12 +2,13 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
-import { useToast } from "./ToastProvider"; // ← NEW
+import { useToast } from "./ToastProvider";
 
 export default function Ventas() {
-  const toast = useToast(); // ← NEW
+  const toast = useToast();
 
   const [nombre, setNombre] = useState("");
+  const [ean, setEan] = useState(""); // ← NEW
   const [productosStock, setProductosStock] = useState([]);
 
   const [stockId, setStockId] = useState(null);
@@ -33,6 +34,9 @@ export default function Ventas() {
 
   const almacenId = localStorage.getItem("almacen_id");
 
+  // Helpers
+  const normalizeEan = (s) => (s || "").replace(/\D/g, ""); // solo dígitos
+
   useEffect(() => {
     const cargarProductos = async () => {
       if (!almacenId) return;
@@ -40,13 +44,13 @@ export default function Ventas() {
         .from("Stock")
         .select("nombre")
         .eq("almacen_id", almacenId)
-        .eq("activo", true);                     // ← FILTRO: solo activos
+        .eq("activo", true);
       if (!error && data) setProductosStock(data.map((p) => p.nombre));
     };
     cargarProductos();
   }, [almacenId]);
 
-  // Cargar info del producto seleccionado
+  // Cargar info del producto seleccionado por nombre
   useEffect(() => {
     const obtenerStock = async () => {
       setFechasVencimiento([]);
@@ -58,15 +62,16 @@ export default function Ventas() {
 
       const { data, error } = await supabase
         .from("Stock")
-        .select("id, cantidad")
+        .select("id, cantidad, ean")
         .eq("nombre", nombre)
         .eq("almacen_id", almacenId)
-        .eq("activo", true)                      // ← FILTRO: solo activos
-        .single();
+        .eq("activo", true)
+        .maybeSingle();
 
       if (!error && data) {
         setStockId(data.id);
         setCantidadDisponible(data.cantidad || 0);
+        setEan(data.ean || ""); // ← mostrar EAN existente si lo tiene
       }
     };
     obtenerStock();
@@ -116,6 +121,69 @@ export default function Ventas() {
 
     obtenerFechasVencimiento();
   }, [stockId]);
+
+  // Lookup por EAN + actualización si el producto no tenía EAN
+  const handleEanLookup = async () => {
+    if (!almacenId) return;
+    const clean = normalizeEan(ean);
+    setEan(clean);
+    if (!clean) return;
+
+    // 1) Buscar por EAN (solo activos)
+    const { data: byEan, error: e1 } = await supabase
+      .from("Stock")
+      .select("id, nombre, cantidad, ean")
+      .eq("almacen_id", almacenId)
+      .eq("activo", true)
+      .eq("ean", clean)
+      .maybeSingle();
+
+    if (!e1 && byEan) {
+      // Encontrado por EAN: autocompleto nombre y cantidades
+      setNombre(byEan.nombre);
+      setStockId(byEan.id);
+      setCantidadDisponible(byEan.cantidad || 0);
+      return;
+    }
+
+    // 2) Si no existe por EAN pero hay nombre seleccionado, y ese producto NO tiene EAN → actualizar
+    if (nombre) {
+      const { data: byName, error: e2 } = await supabase
+        .from("Stock")
+        .select("id, ean, cantidad")
+        .eq("almacen_id", almacenId)
+        .eq("activo", true)
+        .eq("nombre", nombre)
+        .maybeSingle();
+
+      if (!e2 && byName) {
+        if (!byName.ean) {
+          // Intentar setear EAN en este producto
+          const { error: updErr } = await supabase
+            .from("Stock")
+            .update({ ean: clean })
+            .eq("id", byName.id);
+
+          if (!updErr) {
+            toast.success("EAN agregado al producto.");
+            setStockId(byName.id);
+            setCantidadDisponible(byName.cantidad || 0);
+          } else {
+            // puede ser conflicto de unicidad o formato
+            toast.error("No se pudo guardar el EAN (posible duplicado en este almacén).");
+          }
+        } else if (byName.ean !== clean) {
+          toast.info("El producto seleccionado ya tenía otro EAN guardado.");
+        }
+      } else {
+        // No hay producto por nombre: aviso
+        toast.info("No se encontró producto con ese EAN en este almacén.");
+      }
+    } else {
+      // No hay nombre y no existe por EAN
+      toast.info("No se encontró producto con ese EAN en este almacén.");
+    }
+  };
 
   const handleCantidadChange = (e) => {
     const value = parseInt(e.target.value, 10);
@@ -261,6 +329,7 @@ export default function Ventas() {
 
       // 6) Limpiar
       setNombre("");
+      setEan(""); // ← limpiar EAN
       setCantidadVentas("");
       setPrecioVenta("");
       setCantidadDisponible(0);
@@ -290,6 +359,16 @@ export default function Ventas() {
         <h1 className="text-2xl font-bold text-center text-gray-700">Cargar Venta</h1>
 
         <div className="space-y-4">
+          {/* EAN (opcional) */}
+          <input
+            type="text"
+            placeholder="EAN (opcional)"
+            value={ean}
+            onChange={(e) => setEan(e.target.value)}
+            onBlur={handleEanLookup} // lookup y posible actualización
+            className="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+
           <input
             list="productos"
             placeholder="Seleccionar o escribir producto"
