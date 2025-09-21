@@ -1,4 +1,4 @@
-// Ventas.jsx — escaneo con BarcodeDetector + fallback ZXing (CDN), beep/vibración, linterna, acumulador {ean->cantidad}
+// Ventas.jsx — cámara con mejoras: alta resolución, zoom digital (recorte central), zoom hardware (si hay), ZXing TRY_HARDER
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
@@ -42,6 +42,10 @@ export default function Ventas() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
+  // Offscreen para zoom digital (sólo BarcodeDetector)
+  const offCanvasRef = useRef(null);
+  const [digitalZoom, setDigitalZoom] = useState(1.0); // 1.0 = sin recorte; 1.8-2.0 = más “cerca”
+
   // BarcodeDetector path
   const [detectorSupported, setDetectorSupported] = useState(false);
   const detectorRef = useRef(null);
@@ -53,9 +57,11 @@ export default function Ventas() {
   const zxingReaderRef = useRef(null);
   const zxingControlsRef = useRef(null);
 
-  // Torch
+  // Torch + hardware zoom
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [hasHwZoom, setHasHwZoom] = useState(false);
+  const [hwZoom, setHwZoom] = useState(null);
 
   // Debounce memoria
   const lastHitRef = useRef(new Map()); // ean -> timestamp
@@ -63,7 +69,7 @@ export default function Ventas() {
   // Acumulador {ean -> cantidad}
   const [scannedMap, setScannedMap] = useState({});
 
-  // Beep breve
+  // Beep breve + vibrar
   const beep = () => {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -89,13 +95,15 @@ export default function Ventas() {
     setDetectorSupported(typeof window !== "undefined" && "BarcodeDetector" in window);
   }, []);
 
-  // ==== Cámara base (para BarcodeDetector) ====
+  // ==== Cámara base ====
   const startCamera = async () => {
     const constraints = {
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        // pedimos 1080p si se puede (más píxeles = mejor detección en símbolos chicos)
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30, max: 60 },
       },
       audio: false,
     };
@@ -110,6 +118,15 @@ export default function Ventas() {
       const caps = track.getCapabilities?.() || {};
       setHasTorch(!!caps.torch);
       setTorchOn(false);
+      setHasHwZoom(!!caps.zoom);
+      try {
+        const settings = track.getSettings?.() || {};
+        setHwZoom(settings.zoom ?? null);
+        // intento activar autofocus continuo si existe
+        if (caps.focusMode && caps.focusMode.includes("continuous")) {
+          await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+        }
+      } catch {}
     } catch (e) {
       console.error("No se pudo iniciar la cámara:", e);
       toast.error("No se pudo iniciar la cámara. Verificá permisos o el origen (HTTPS/localhost).");
@@ -160,7 +177,50 @@ export default function Ventas() {
     }
   };
 
-  // ==== Loop con BarcodeDetector ====
+  const changeHwZoom = async (delta) => {
+    try {
+      const stream = streamRef.current || (videoRef.current?.srcObject ?? null);
+      if (!stream) return;
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities?.();
+      const settings = track.getSettings?.();
+      if (!caps?.zoom) return;
+      let z = settings?.zoom ?? caps.zoom.min ?? 1;
+      z = Math.min(caps.zoom.max, Math.max(caps.zoom.min, z + delta));
+      await track.applyConstraints({ advanced: [{ zoom: z }] });
+      setHwZoom(z);
+    } catch (e) {
+      console.warn("No se pudo ajustar el zoom de hardware:", e);
+    }
+  };
+
+  // ==== Recorte central para BarcodeDetector ====
+  const getCroppedCanvas = () => {
+    const video = videoRef.current;
+    if (!video) return null;
+    const vw = video.videoWidth || 0;
+    const vh = video.videoHeight || 0;
+    if (!vw || !vh) return null;
+
+    const dz = Math.max(1.0, parseFloat(digitalZoom) || 1.0);
+    if (dz <= 1.01) return video; // sin recorte → detectar sobre el video directo
+
+    const cropW = Math.floor(vw / dz);
+    const cropH = Math.floor(vh / dz);
+    const sx = Math.floor((vw - cropW) / 2);
+    const sy = Math.floor((vh - cropH) / 2);
+
+    const canvas = offCanvasRef.current || (offCanvasRef.current = document.createElement("canvas"));
+    // “re-escalo” al tamaño completo para aportar más píxeles al detector
+    canvas.width = vw;
+    canvas.height = vh;
+
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  };
+
+  // ==== Loop con BarcodeDetector (con zoom digital) ====
   const startDetectorLoop = async () => {
     try {
       if (!("BarcodeDetector" in window)) throw new Error("no-detector");
@@ -171,7 +231,10 @@ export default function Ventas() {
       loopTimerRef.current = setInterval(async () => {
         try {
           if (!videoRef.current || !detectorRef.current || !isScanning) return;
-          const detections = await detectorRef.current.detect(videoRef.current);
+          const source = getCroppedCanvas(); // video (sin zoom) o canvas (con zoom digital)
+          if (!source) return;
+
+          const detections = await detectorRef.current.detect(source);
           const now = Date.now();
           for (const d of detections) {
             const raw = String(d.rawValue || "");
@@ -189,32 +252,41 @@ export default function Ventas() {
         } catch {}
       }, 200);
     } catch (e) {
-      // si falla, fallback a ZXing
       console.warn("BarcodeDetector no disponible o falló. Activando ZXing…", e);
       await startZxing();
     }
   };
 
-  // ==== ZXing (CDN, sin instalar) ====
+  // ==== ZXing (CDN, TRY_HARDER) ====
   const startZxing = async () => {
     try {
       setUsingZxing(true);
-      // ZXing maneja su propio stream: no iniciar cámara antes para evitar duplicado
-      // Si ya hay stream por Detector, lo usamos igual (ZXing toma el <video>)
+
+      // Si no hay stream aún (p.ej. no pasamos por detector), abrimos cámara
       if (!videoRef.current?.srcObject) {
-        // abrir cámara si aún no hay stream (misma UX que detector)
         await startCamera();
       }
 
       const { BrowserMultiFormatReader, NotFoundException } = await import(
         "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm"
       );
+      // Hints extra para mejorar lectura de símbolos chicos
+      const { DecodeHintType, BarcodeFormat } = await import(
+        "https://cdn.jsdelivr.net/npm/@zxing/library@0.19.2/+esm"
+      );
 
-      const reader = new BrowserMultiFormatReader();
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.CODE_128,
+      ]);
+      hints.set(DecodeHintType.TRY_HARDER, true);
+
+      const reader = new BrowserMultiFormatReader(hints, 150);
       zxingReaderRef.current = reader;
       setIsScanning(true);
 
-      // decodeFromVideoElement: usa el video que ya está reproduciendo
       const controls = await reader.decodeFromVideoElement(videoRef.current, (result, err) => {
         if (result) {
           const text = result.getText();
@@ -230,20 +302,23 @@ export default function Ventas() {
             }
           }
         } else if (err && !(err instanceof NotFoundException)) {
-          // otros errores: logueo silencioso
-          // console.debug(err);
+          // otros errores transitorios → ignorar
         }
       });
 
       zxingControlsRef.current = controls;
 
-      // Torch capability (si el stream viene por ZXing)
+      // Torch / zoom hardware si el stream lo permite
       try {
         const track = (videoRef.current?.srcObject)?.getVideoTracks?.()[0];
         const caps = track?.getCapabilities?.() || {};
         if (caps.torch) {
           setHasTorch(true);
           setTorchOn(false);
+        }
+        if (caps.zoom) {
+          setHasHwZoom(true);
+          setHwZoom(track?.getSettings?.().zoom ?? null);
         }
       } catch {}
     } catch (e) {
@@ -257,7 +332,6 @@ export default function Ventas() {
     setScannedMap({});
     lastHitRef.current = new Map();
 
-    // hint de contexto seguro
     if (!window.isSecureContext) {
       toast.info("Sugerencia: usá HTTPS o localhost para mejor compatibilidad del lector.");
     }
@@ -278,17 +352,13 @@ export default function Ventas() {
   const pauseResume = async () => {
     if (usingZxing) {
       if (isScanning) {
-        try {
-          zxingControlsRef.current?.stop();
-        } catch {}
+        try { zxingControlsRef.current?.stop(); } catch {}
         setIsScanning(false);
       } else {
-        // reanudar: volver a crear el loop zxing (reutiliza el mismo <video>)
-        await startZxing();
+        await startZxing(); // reanuda
       }
     } else {
-      // BarcodeDetector: toggle flag; el intervalo respeta isScanning
-      setIsScanning((prev) => !prev);
+      setIsScanning((prev) => !prev); // el intervalo respeta isScanning
     }
   };
 
@@ -824,7 +894,41 @@ export default function Ventas() {
               <div className="font-semibold text-gray-800">
                 Escanear códigos {usingZxing ? "(ZXing)" : detectorSupported ? "(nativo)" : ""}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
+                {/* Zoom digital (sólo detector nativo) */}
+                {!usingZxing && detectorSupported && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Zoom</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="2.2"
+                      step="0.1"
+                      value={digitalZoom}
+                      onChange={(e) => setDigitalZoom(parseFloat(e.target.value))}
+                    />
+                    <span className="text-xs text-gray-600">{digitalZoom.toFixed(1)}×</span>
+                  </div>
+                )}
+                {/* Zoom hardware */}
+                {hasHwZoom && (
+                  <>
+                    <button
+                      onClick={() => changeHwZoom(-0.5)}
+                      className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                      title="Zoom − (hardware)"
+                    >
+                      −
+                    </button>
+                    <button
+                      onClick={() => changeHwZoom(+0.5)}
+                      className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                      title="Zoom + (hardware)"
+                    >
+                      +
+                    </button>
+                  </>
+                )}
                 {hasTorch && (
                   <button
                     onClick={toggleTorch}
@@ -866,11 +970,9 @@ export default function Ventas() {
                 <div className="pointer-events-none absolute inset-0 border-2 border-emerald-400/60 rounded-lg" />
               </div>
 
-              {!detectorSupported && !usingZxing && (
-                <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                  Este navegador no soporta BarcodeDetector. Intentando fallback ZXing…
-                </div>
-              )}
+              <div className="text-xs text-gray-600">
+                Tip: acercá el código hasta que ocupe ~60–80% del ancho del marco, inclinalo apenas, y subí el zoom si no lo toma.
+              </div>
 
               {/* Resumen live */}
               <div className="border rounded-lg overflow-hidden">
