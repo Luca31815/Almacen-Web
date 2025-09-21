@@ -1,8 +1,13 @@
-// Ventas.jsx — cámara con mejoras: alta resolución, zoom digital (recorte central), zoom hardware (si hay), ZXing TRY_HARDER
+// Ventas.jsx — Escaneo robusto: nativo + auto-fallback ZXing TRY_HARDER + OCR dígitos (Tesseract)
+// - Alta resolución, zoom digital/hardware, autofocus continuo
+// - Auto-cambio a ZXing si en ~4s no hay detecciones
+// - Botón "OCR número" para leer el texto impreso (8–14 dígitos) con validación EAN-13/EAN-8
+
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
 import { useToast } from "./ToastProvider";
+import Tesseract from "tesseract.js";
 
 export default function Ventas() {
   const toast = useToast();
@@ -35,7 +40,28 @@ export default function Ventas() {
   const almacenId = localStorage.getItem("almacen_id");
 
   // ========= Helpers =========
-  const normalizeEan = (s) => (s || "").replace(/\D/g, "");
+  const normalizeEan = (s) => (s || "").replace(/\D/g, ""); // solo dígitos
+
+  // Validación EAN-13 y EAN-8
+  const isValidEAN13 = (code) => {
+    if (!/^\d{13}$/.test(code)) return false;
+    const digits = code.split("").map((d) => +d);
+    const check = digits.pop();
+    let sum = 0;
+    for (let i = 0; i < digits.length; i++) {
+      sum += digits[digits.length - 1 - i] * (i % 2 === 0 ? 3 : 1); // desde el final
+    }
+    const calc = (10 - (sum % 10)) % 10;
+    return calc === check;
+  };
+  const isValidEAN8 = (code) => {
+    if (!/^\d{8}$/.test(code)) return false;
+    const digits = code.split("").map((d) => +d);
+    const check = digits.pop();
+    const sum = digits[0] * 3 + digits[1] * 1 + digits[2] * 3 + digits[3] * 1 + digits[4] * 3 + digits[5] * 1 + digits[6] * 3;
+    const calc = (10 - (sum % 10)) % 10;
+    return calc === check;
+  };
 
   // ========= Cámara / Escaneo =========
   const [scanOpen, setScanOpen] = useState(false);
@@ -44,7 +70,10 @@ export default function Ventas() {
 
   // Offscreen para zoom digital (sólo BarcodeDetector)
   const offCanvasRef = useRef(null);
-  const [digitalZoom, setDigitalZoom] = useState(1.0); // 1.0 = sin recorte; 1.8-2.0 = más “cerca”
+  const [digitalZoom, setDigitalZoom] = useState(1.4); // empezar un poco “cerca” ayuda
+  // tiempo última detección para auto-fallback
+  const [lastDetectTs, setLastDetectTs] = useState(0);
+  const autoSwitchTimerRef = useRef(null);
 
   // BarcodeDetector path
   const [detectorSupported, setDetectorSupported] = useState(false);
@@ -69,7 +98,7 @@ export default function Ventas() {
   // Acumulador {ean -> cantidad}
   const [scannedMap, setScannedMap] = useState({});
 
-  // Beep breve + vibrar
+  // Beep + vibración
   const beep = () => {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -88,7 +117,9 @@ export default function Ventas() {
     } catch {}
   };
   const vibrate = (ms = 60) => {
-    try { navigator.vibrate?.(ms); } catch {}
+    try {
+      navigator.vibrate?.(ms);
+    } catch {}
   };
 
   useEffect(() => {
@@ -100,7 +131,6 @@ export default function Ventas() {
     const constraints = {
       video: {
         facingMode: { ideal: "environment" },
-        // pedimos 1080p si se puede (más píxeles = mejor detección en símbolos chicos)
         width: { ideal: 1920 },
         height: { ideal: 1080 },
         frameRate: { ideal: 30, max: 60 },
@@ -122,7 +152,6 @@ export default function Ventas() {
       try {
         const settings = track.getSettings?.() || {};
         setHwZoom(settings.zoom ?? null);
-        // intento activar autofocus continuo si existe
         if (caps.focusMode && caps.focusMode.includes("continuous")) {
           await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
         }
@@ -135,27 +164,23 @@ export default function Ventas() {
 
   const stopCamera = () => {
     try {
-      // detener loops
       if (loopTimerRef.current) {
         clearInterval(loopTimerRef.current);
         loopTimerRef.current = null;
       }
+      if (autoSwitchTimerRef.current) {
+        clearInterval(autoSwitchTimerRef.current);
+        autoSwitchTimerRef.current = null;
+      }
       setIsScanning(false);
-
-      // detener ZXing
       try {
         zxingControlsRef.current?.stop();
         zxingReaderRef.current?.reset?.();
       } catch {}
-
-      // detener stream
       const stream = streamRef.current || (videoRef.current?.srcObject ?? null);
       stream?.getTracks?.().forEach((t) => t.stop());
       streamRef.current = null;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+      if (videoRef.current) videoRef.current.srcObject = null;
       setUsingZxing(false);
     } catch (e) {
       console.warn("Error al detener cámara:", e);
@@ -211,7 +236,7 @@ export default function Ventas() {
     const sy = Math.floor((vh - cropH) / 2);
 
     const canvas = offCanvasRef.current || (offCanvasRef.current = document.createElement("canvas"));
-    // “re-escalo” al tamaño completo para aportar más píxeles al detector
+    // Reescalo al tamaño completo para aportar más píxeles al detector
     canvas.width = vw;
     canvas.height = vh;
 
@@ -228,14 +253,18 @@ export default function Ventas() {
         formats: ["ean-13", "ean-8", "code-128"],
       });
       setIsScanning(true);
+      setLastDetectTs(Date.now());
+
       loopTimerRef.current = setInterval(async () => {
         try {
           if (!videoRef.current || !detectorRef.current || !isScanning) return;
-          const source = getCroppedCanvas(); // video (sin zoom) o canvas (con zoom digital)
+          const source = getCroppedCanvas(); // video/canvas según zoom digital
           if (!source) return;
 
           const detections = await detectorRef.current.detect(source);
           const now = Date.now();
+          if (detections?.length) setLastDetectTs(now);
+
           for (const d of detections) {
             const raw = String(d.rawValue || "");
             const digits = normalizeEan(raw);
@@ -250,9 +279,17 @@ export default function Ventas() {
             vibrate(50);
           }
         } catch {}
-      }, 200);
+      }, 160); // un poco más rápido
+
+      // Auto-switch a ZXing si pasan ~4s sin detecciones
+      autoSwitchTimerRef.current = setInterval(async () => {
+        if (!usingZxing && isScanning && Date.now() - lastDetectTs > 4000) {
+          toast.info("Sin lecturas con el detector nativo: probando ZXing…");
+          await startZxing();
+        }
+      }, 1200);
     } catch (e) {
-      console.warn("BarcodeDetector no disponible o falló. Activando ZXing…", e);
+      console.warn("BarcodeDetector no disponible/falló. Activando ZXing…", e);
       await startZxing();
     }
   };
@@ -260,9 +297,9 @@ export default function Ventas() {
   // ==== ZXing (CDN, TRY_HARDER) ====
   const startZxing = async () => {
     try {
+      if (usingZxing) return; // ya activo
       setUsingZxing(true);
 
-      // Si no hay stream aún (p.ej. no pasamos por detector), abrimos cámara
       if (!videoRef.current?.srcObject) {
         await startCamera();
       }
@@ -270,7 +307,6 @@ export default function Ventas() {
       const { BrowserMultiFormatReader, NotFoundException } = await import(
         "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm"
       );
-      // Hints extra para mejorar lectura de símbolos chicos
       const { DecodeHintType, BarcodeFormat } = await import(
         "https://cdn.jsdelivr.net/npm/@zxing/library@0.19.2/+esm"
       );
@@ -286,6 +322,7 @@ export default function Ventas() {
       const reader = new BrowserMultiFormatReader(hints, 150);
       zxingReaderRef.current = reader;
       setIsScanning(true);
+      setLastDetectTs(Date.now());
 
       const controls = await reader.decodeFromVideoElement(videoRef.current, (result, err) => {
         if (result) {
@@ -297,12 +334,13 @@ export default function Ventas() {
             if (now - last >= 800) {
               lastHitRef.current.set(digits, now);
               setScannedMap((prev) => ({ ...prev, [digits]: (prev[digits] || 0) + 1 }));
+              setLastDetectTs(now);
               beep();
               vibrate(50);
             }
           }
         } else if (err && !(err instanceof NotFoundException)) {
-          // otros errores transitorios → ignorar
+          // errores transitorios → ignorar
         }
       });
 
@@ -327,13 +365,38 @@ export default function Ventas() {
     }
   };
 
+  const forceZxing = async () => {
+    // Cambiar manualmente de nativo → ZXing
+    try {
+      if (usingZxing) return;
+      if (!videoRef.current?.srcObject) await startCamera();
+      await startZxing();
+      toast.success("Modo ZXing activado.");
+    } catch {}
+  };
+  const forceNative = async () => {
+    // Cambiar manualmente ZXing → nativo
+    try {
+      if (!detectorSupported) {
+        toast.info("El detector nativo no está disponible en este dispositivo.");
+        return;
+      }
+      stopCamera(); // limpia streams/loops
+      await startCamera();
+      await startDetectorLoop();
+      toast.success("Modo nativo activado.");
+      setScanOpen(true); // mantener modal visible
+    } catch {}
+  };
+
   const openScanner = async () => {
     setScanOpen(true);
     setScannedMap({});
     lastHitRef.current = new Map();
+    setLastDetectTs(Date.now());
 
     if (!window.isSecureContext) {
-      toast.info("Sugerencia: usá HTTPS o localhost para mejor compatibilidad del lector.");
+      toast.info("Sugerencia: usá HTTPS o localhost para máxima compatibilidad.");
     }
 
     if (detectorSupported) {
@@ -365,6 +428,66 @@ export default function Ventas() {
   const clearScans = () => {
     setScannedMap({});
     lastHitRef.current = new Map();
+  };
+
+  // ==== OCR dígitos (fallback manual) ====
+  const getCurrentFrameDataURL = () => {
+    const source = getCroppedCanvas() || videoRef.current;
+    if (!source) return null;
+
+    // si es video, dibujamos a canvas para fijar el frame
+    if (source instanceof HTMLVideoElement) {
+      const vw = source.videoWidth, vh = source.videoHeight;
+      if (!vw || !vh) return null;
+      const c = offCanvasRef.current || (offCanvasRef.current = document.createElement("canvas"));
+      c.width = vw; c.height = vh;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(source, 0, 0, vw, vh);
+      return c.toDataURL("image/png");
+    }
+    // si ya es canvas (zoom digital), lo usamos
+    try {
+      return source.toDataURL("image/png");
+    } catch {
+      return null;
+    }
+  };
+
+  const ocrDigitsFromFrame = async () => {
+    try {
+      const dataUrl = getCurrentFrameDataURL();
+      if (!dataUrl) {
+        toast.error("No se pudo capturar el frame.");
+        return;
+      }
+      toast.info("Leyendo número con OCR…");
+
+      const { data } = await Tesseract.recognize(dataUrl, "eng", {
+        // whitelist de dígitos
+        tessedit_char_whitelist: "0123456789",
+      });
+
+      const text = data?.text || "";
+      const candidates = (text.match(/\b\d{8,14}\b/g) || []).map((s) => s.trim());
+      if (!candidates.length) {
+        toast.error("No se detectaron números de 8–14 dígitos en el frame.");
+        return;
+      }
+
+      // preferir EAN-13 válido, luego EAN-8 válido, luego el más largo
+      let picked = candidates.find(isValidEAN13);
+      if (!picked) picked = candidates.find(isValidEAN8);
+      if (!picked) picked = candidates.sort((a, b) => b.length - a.length)[0];
+
+      setScannedMap((prev) => ({ ...prev, [picked]: (prev[picked] || 0) + 1 }));
+      setLastDetectTs(Date.now());
+      beep();
+      vibrate(50);
+      toast.success(`OCR: ${picked}`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Fallo el OCR del número.");
+    }
   };
 
   // ========== Carga de productos / Stock ==========
@@ -902,7 +1025,7 @@ export default function Ventas() {
                     <input
                       type="range"
                       min="1"
-                      max="2.2"
+                      max="2.4"
                       step="0.1"
                       value={digitalZoom}
                       onChange={(e) => setDigitalZoom(parseFloat(e.target.value))}
@@ -940,6 +1063,24 @@ export default function Ventas() {
                     {torchOn ? "Linterna ON" : "Linterna OFF"}
                   </button>
                 )}
+                {/* Forzar modos */}
+                {!usingZxing ? (
+                  <button
+                    onClick={forceZxing}
+                    className="text-xs px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700"
+                    title="Forzar modo ZXing (más agresivo)"
+                  >
+                    Forzar ZXing
+                  </button>
+                ) : (
+                  <button
+                    onClick={forceNative}
+                    className="text-xs px-2 py-1 rounded bg-slate-600 text-white hover:bg-slate-700"
+                    title="Volver a modo nativo"
+                  >
+                    Modo nativo
+                  </button>
+                )}
                 <button
                   onClick={pauseResume}
                   className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
@@ -970,8 +1111,24 @@ export default function Ventas() {
                 <div className="pointer-events-none absolute inset-0 border-2 border-emerald-400/60 rounded-lg" />
               </div>
 
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={ocrDigitsFromFrame}
+                  className="text-xs px-3 py-1 rounded bg-orange-600 text-white hover:bg-orange-700"
+                  title="Leer el número impreso (OCR)"
+                >
+                  OCR número
+                </button>
+                <button
+                  onClick={clearScans}
+                  className="text-xs px-3 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                >
+                  Limpiar
+                </button>
+              </div>
+
               <div className="text-xs text-gray-600">
-                Tip: acercá el código hasta que ocupe ~60–80% del ancho del marco, inclinalo apenas, y subí el zoom si no lo toma.
+                Tips: acercá el código hasta que ocupe ~60–80% del marco; incliná un poquito; probá linterna y zoom.
               </div>
 
               {/* Resumen live */}
@@ -1013,16 +1170,8 @@ export default function Ventas() {
                     </tbody>
                   </table>
                 </div>
-                <div className="px-3 py-2 bg-gray-50 border-t flex items-center justify-between">
-                  <div className="text-xs text-gray-600">
-                    Nota: se usa *debounce* por código para evitar duplicados.
-                  </div>
-                  <button
-                    onClick={clearScans}
-                    className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
-                  >
-                    Limpiar
-                  </button>
+                <div className="px-3 py-2 bg-gray-50 border-t text-xs text-gray-600">
+                  Se usa *debounce* por código para evitar duplicados. Si no lee, probá “Forzar ZXing” u “OCR número”.
                 </div>
               </div>
             </div>
