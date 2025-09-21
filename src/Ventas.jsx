@@ -1,5 +1,5 @@
-// Ventas.jsx
-import { useEffect, useState } from "react";
+// Ventas.jsx — escaneo con BarcodeDetector + fallback ZXing (CDN), beep/vibración, linterna, acumulador {ean->cantidad}
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
 import { useToast } from "./ToastProvider";
@@ -8,7 +8,7 @@ export default function Ventas() {
   const toast = useToast();
 
   const [nombre, setNombre] = useState("");
-  const [ean, setEan] = useState(""); // ← NEW
+  const [ean, setEan] = useState("");
   const [productosStock, setProductosStock] = useState([]);
 
   const [stockId, setStockId] = useState(null);
@@ -34,9 +34,270 @@ export default function Ventas() {
 
   const almacenId = localStorage.getItem("almacen_id");
 
-  // Helpers
-  const normalizeEan = (s) => (s || "").replace(/\D/g, ""); // solo dígitos
+  // ========= Helpers =========
+  const normalizeEan = (s) => (s || "").replace(/\D/g, "");
 
+  // ========= Cámara / Escaneo =========
+  const [scanOpen, setScanOpen] = useState(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
+  // BarcodeDetector path
+  const [detectorSupported, setDetectorSupported] = useState(false);
+  const detectorRef = useRef(null);
+  const loopTimerRef = useRef(null);
+  const [isScanning, setIsScanning] = useState(false);
+
+  // ZXing fallback path
+  const [usingZxing, setUsingZxing] = useState(false);
+  const zxingReaderRef = useRef(null);
+  const zxingControlsRef = useRef(null);
+
+  // Torch
+  const [hasTorch, setHasTorch] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+
+  // Debounce memoria
+  const lastHitRef = useRef(new Map()); // ean -> timestamp
+
+  // Acumulador {ean -> cantidad}
+  const [scannedMap, setScannedMap] = useState({});
+
+  // Beep breve
+  const beep = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+        ctx.close();
+      }, 100);
+    } catch {}
+  };
+  const vibrate = (ms = 60) => {
+    try { navigator.vibrate?.(ms); } catch {}
+  };
+
+  useEffect(() => {
+    setDetectorSupported(typeof window !== "undefined" && "BarcodeDetector" in window);
+  }, []);
+
+  // ==== Cámara base (para BarcodeDetector) ====
+  const startCamera = async () => {
+    const constraints = {
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    };
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities?.() || {};
+      setHasTorch(!!caps.torch);
+      setTorchOn(false);
+    } catch (e) {
+      console.error("No se pudo iniciar la cámara:", e);
+      toast.error("No se pudo iniciar la cámara. Verificá permisos o el origen (HTTPS/localhost).");
+    }
+  };
+
+  const stopCamera = () => {
+    try {
+      // detener loops
+      if (loopTimerRef.current) {
+        clearInterval(loopTimerRef.current);
+        loopTimerRef.current = null;
+      }
+      setIsScanning(false);
+
+      // detener ZXing
+      try {
+        zxingControlsRef.current?.stop();
+        zxingReaderRef.current?.reset?.();
+      } catch {}
+
+      // detener stream
+      const stream = streamRef.current || (videoRef.current?.srcObject ?? null);
+      stream?.getTracks?.().forEach((t) => t.stop());
+      streamRef.current = null;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      setUsingZxing(false);
+    } catch (e) {
+      console.warn("Error al detener cámara:", e);
+    }
+  };
+
+  const toggleTorch = async () => {
+    try {
+      const stream = streamRef.current || (videoRef.current?.srcObject ?? null);
+      if (!stream) return;
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities?.() || {};
+      if (!caps.torch) return;
+      const desired = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: desired }] });
+      setTorchOn(desired);
+    } catch (e) {
+      console.warn("Torch no soportado / no se pudo aplicar:", e);
+    }
+  };
+
+  // ==== Loop con BarcodeDetector ====
+  const startDetectorLoop = async () => {
+    try {
+      if (!("BarcodeDetector" in window)) throw new Error("no-detector");
+      detectorRef.current = new window.BarcodeDetector({
+        formats: ["ean-13", "ean-8", "code-128"],
+      });
+      setIsScanning(true);
+      loopTimerRef.current = setInterval(async () => {
+        try {
+          if (!videoRef.current || !detectorRef.current || !isScanning) return;
+          const detections = await detectorRef.current.detect(videoRef.current);
+          const now = Date.now();
+          for (const d of detections) {
+            const raw = String(d.rawValue || "");
+            const digits = normalizeEan(raw);
+            if (digits.length < 8 || digits.length > 14) continue;
+
+            const last = lastHitRef.current.get(digits) || 0;
+            if (now - last < 800) continue; // debounce
+            lastHitRef.current.set(digits, now);
+
+            setScannedMap((prev) => ({ ...prev, [digits]: (prev[digits] || 0) + 1 }));
+            beep();
+            vibrate(50);
+          }
+        } catch {}
+      }, 200);
+    } catch (e) {
+      // si falla, fallback a ZXing
+      console.warn("BarcodeDetector no disponible o falló. Activando ZXing…", e);
+      await startZxing();
+    }
+  };
+
+  // ==== ZXing (CDN, sin instalar) ====
+  const startZxing = async () => {
+    try {
+      setUsingZxing(true);
+      // ZXing maneja su propio stream: no iniciar cámara antes para evitar duplicado
+      // Si ya hay stream por Detector, lo usamos igual (ZXing toma el <video>)
+      if (!videoRef.current?.srcObject) {
+        // abrir cámara si aún no hay stream (misma UX que detector)
+        await startCamera();
+      }
+
+      const { BrowserMultiFormatReader, NotFoundException } = await import(
+        "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/+esm"
+      );
+
+      const reader = new BrowserMultiFormatReader();
+      zxingReaderRef.current = reader;
+      setIsScanning(true);
+
+      // decodeFromVideoElement: usa el video que ya está reproduciendo
+      const controls = await reader.decodeFromVideoElement(videoRef.current, (result, err) => {
+        if (result) {
+          const text = result.getText();
+          const digits = normalizeEan(text);
+          if (digits.length >= 8 && digits.length <= 14) {
+            const now = Date.now();
+            const last = lastHitRef.current.get(digits) || 0;
+            if (now - last >= 800) {
+              lastHitRef.current.set(digits, now);
+              setScannedMap((prev) => ({ ...prev, [digits]: (prev[digits] || 0) + 1 }));
+              beep();
+              vibrate(50);
+            }
+          }
+        } else if (err && !(err instanceof NotFoundException)) {
+          // otros errores: logueo silencioso
+          // console.debug(err);
+        }
+      });
+
+      zxingControlsRef.current = controls;
+
+      // Torch capability (si el stream viene por ZXing)
+      try {
+        const track = (videoRef.current?.srcObject)?.getVideoTracks?.()[0];
+        const caps = track?.getCapabilities?.() || {};
+        if (caps.torch) {
+          setHasTorch(true);
+          setTorchOn(false);
+        }
+      } catch {}
+    } catch (e) {
+      console.error("No se pudo iniciar ZXing:", e);
+      toast.error("No se pudo iniciar el lector de códigos (ZXing).");
+    }
+  };
+
+  const openScanner = async () => {
+    setScanOpen(true);
+    setScannedMap({});
+    lastHitRef.current = new Map();
+
+    // hint de contexto seguro
+    if (!window.isSecureContext) {
+      toast.info("Sugerencia: usá HTTPS o localhost para mejor compatibilidad del lector.");
+    }
+
+    if (detectorSupported) {
+      await startCamera();
+      await startDetectorLoop();
+    } else {
+      await startZxing();
+    }
+  };
+
+  const closeScanner = () => {
+    stopCamera();
+    setScanOpen(false);
+  };
+
+  const pauseResume = async () => {
+    if (usingZxing) {
+      if (isScanning) {
+        try {
+          zxingControlsRef.current?.stop();
+        } catch {}
+        setIsScanning(false);
+      } else {
+        // reanudar: volver a crear el loop zxing (reutiliza el mismo <video>)
+        await startZxing();
+      }
+    } else {
+      // BarcodeDetector: toggle flag; el intervalo respeta isScanning
+      setIsScanning((prev) => !prev);
+    }
+  };
+
+  const clearScans = () => {
+    setScannedMap({});
+    lastHitRef.current = new Map();
+  };
+
+  // ========== Carga de productos / Stock ==========
   useEffect(() => {
     const cargarProductos = async () => {
       if (!almacenId) return;
@@ -71,7 +332,7 @@ export default function Ventas() {
       if (!error && data) {
         setStockId(data.id);
         setCantidadDisponible(data.cantidad || 0);
-        setEan(data.ean || ""); // ← mostrar EAN existente si lo tiene
+        setEan(data.ean || "");
       }
     };
     obtenerStock();
@@ -122,7 +383,7 @@ export default function Ventas() {
     obtenerFechasVencimiento();
   }, [stockId]);
 
-  // Lookup por EAN + actualización si el producto no tenía EAN
+  // Lookup por EAN + posible escritura si no tenía
   const handleEanLookup = async () => {
     if (!almacenId) return;
     const clean = normalizeEan(ean);
@@ -139,7 +400,6 @@ export default function Ventas() {
       .maybeSingle();
 
     if (!e1 && byEan) {
-      // Encontrado por EAN: autocompleto nombre y cantidades
       setNombre(byEan.nombre);
       setStockId(byEan.id);
       setCantidadDisponible(byEan.cantidad || 0);
@@ -158,7 +418,6 @@ export default function Ventas() {
 
       if (!e2 && byName) {
         if (!byName.ean) {
-          // Intentar setear EAN en este producto
           const { error: updErr } = await supabase
             .from("Stock")
             .update({ ean: clean })
@@ -169,19 +428,50 @@ export default function Ventas() {
             setStockId(byName.id);
             setCantidadDisponible(byName.cantidad || 0);
           } else {
-            // puede ser conflicto de unicidad o formato
             toast.error("No se pudo guardar el EAN (posible duplicado en este almacén).");
           }
         } else if (byName.ean !== clean) {
           toast.info("El producto seleccionado ya tenía otro EAN guardado.");
         }
       } else {
-        // No hay producto por nombre: aviso
         toast.info("No se encontró producto con ese EAN en este almacén.");
       }
     } else {
-      // No hay nombre y no existe por EAN
       toast.info("No se encontró producto con ese EAN en este almacén.");
+    }
+  };
+
+  // Volcar un EAN escaneado al formulario (busca Stock por EAN)
+  const loadScanToForm = async (scannedEan, qty) => {
+    try {
+      const { data: byEan, error } = await supabase
+        .from("Stock")
+        .select("id, nombre, cantidad, ean")
+        .eq("almacen_id", almacenId)
+        .eq("activo", true)
+        .eq("ean", scannedEan)
+        .maybeSingle();
+
+      setEan(scannedEan);
+
+      if (!error && byEan) {
+        setNombre(byEan.nombre);
+        setStockId(byEan.id);
+        setCantidadDisponible(byEan.cantidad || 0);
+        const usable = Math.max(1, Math.min(byEan.cantidad || 0, qty || 1));
+        setCantidadVentas(String(usable));
+        toast.success(`Cargado ${byEan.nombre} (x${usable})`);
+      } else {
+        setNombre("");
+        setStockId(null);
+        setCantidadDisponible(0);
+        setCantidadVentas(String(qty || 1));
+        toast.info("EAN no encontrado en Stock: completá el producto manualmente.");
+      }
+      closeScanner();
+    } catch (e) {
+      console.error(e);
+      toast.error("Error al cargar el EAN al formulario.");
     }
   };
 
@@ -286,7 +576,6 @@ export default function Ventas() {
 
       // 4) Descontar FIFO + vínculos
       let porVender = qty;
-
       for (const lote of lotes) {
         if (porVender <= 0) break;
         const tomar = Math.min(porVender, lote.cantidad);
@@ -329,7 +618,7 @@ export default function Ventas() {
 
       // 6) Limpiar
       setNombre("");
-      setEan(""); // ← limpiar EAN
+      setEan("");
       setCantidadVentas("");
       setPrecioVenta("");
       setCantidadDisponible(0);
@@ -356,7 +645,16 @@ export default function Ventas() {
           ← Volver al menú
         </Link>
 
-        <h1 className="text-2xl font-bold text-center text-gray-700">Cargar Venta</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-2xl font-bold text-gray-700">Cargar Venta</h1>
+          <button
+            onClick={openScanner}
+            className="text-sm px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+            title="Escanear códigos con la cámara"
+          >
+            Escanear códigos
+          </button>
+        </div>
 
         <div className="space-y-4">
           {/* EAN (opcional) */}
@@ -365,7 +663,7 @@ export default function Ventas() {
             placeholder="EAN (opcional)"
             value={ean}
             onChange={(e) => setEan(e.target.value)}
-            onBlur={handleEanLookup} // lookup y posible actualización
+            onBlur={handleEanLookup}
             className="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
 
@@ -422,8 +720,7 @@ export default function Ventas() {
             />
           </div>
 
-          {/* Fecha de venta y forma de pago */}
-          <div className="flex flex-col sm:flex-row sm:space-x-4 space-y-4 sm:space-y-0">
+          <div className="flex flex-col sm:flex-row sm:space-x-4 sm:space-y-0">
             <div className="flex-1">
               <label className="block text-sm text-gray-600 mb-1">Fecha de venta</label>
               <input
@@ -463,7 +760,173 @@ export default function Ventas() {
         >
           Guardar Venta
         </button>
+
+        {/* Tabla de escaneos acumulados (si hay) */}
+        {Object.keys(scannedMap).length > 0 && (
+          <div className="mt-6 border rounded-xl overflow-hidden">
+            <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
+              <div className="font-medium text-gray-800">Códigos escaneados</div>
+              <div className="flex gap-2">
+                <button
+                  onClick={clearScans}
+                  className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr className="text-left text-gray-800">
+                    <th className="px-3 py-2">EAN</th>
+                    <th className="px-3 py-2">Cantidad</th>
+                    <th className="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(scannedMap).map(([code, qty]) => (
+                    <tr key={code} className="border-t">
+                      <td className="px-3 py-2 text-gray-800">{code}</td>
+                      <td className="px-3 py-2 text-gray-800">{qty}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => loadScanToForm(code, qty)}
+                          className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          title="Cargar este EAN al formulario"
+                        >
+                          Usar en formulario
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {Object.keys(scannedMap).length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
+                        Sin códigos.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Modal de cámara */}
+      {scanOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={closeScanner} />
+          <div className="relative bg-white w-[95%] max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="p-3 border-b flex items-center justify-between">
+              <div className="font-semibold text-gray-800">
+                Escanear códigos {usingZxing ? "(ZXing)" : detectorSupported ? "(nativo)" : ""}
+              </div>
+              <div className="flex gap-2">
+                {hasTorch && (
+                  <button
+                    onClick={toggleTorch}
+                    className={`text-xs px-2 py-1 rounded ${
+                      torchOn ? "bg-amber-500 text-white" : "bg-gray-200 text-gray-800 hover:bg-gray-300"
+                    }`}
+                    title="Linterna"
+                  >
+                    {torchOn ? "Linterna ON" : "Linterna OFF"}
+                  </button>
+                )}
+                <button
+                  onClick={pauseResume}
+                  className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                >
+                  {isScanning ? "Pausar" : "Reanudar"}
+                </button>
+                <button onClick={closeScanner} className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-3 space-y-3">
+              {!window.isSecureContext && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                  Sugerencia: abrí la app en HTTPS o localhost para máxima compatibilidad.
+                </div>
+              )}
+
+              <div className="relative rounded-lg overflow-hidden bg-black">
+                <video
+                  ref={videoRef}
+                  className="w-full h-auto max-h-[55vh] object-contain"
+                  playsInline
+                  muted
+                />
+                <div className="pointer-events-none absolute inset-0 border-2 border-emerald-400/60 rounded-lg" />
+              </div>
+
+              {!detectorSupported && !usingZxing && (
+                <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  Este navegador no soporta BarcodeDetector. Intentando fallback ZXing…
+                </div>
+              )}
+
+              {/* Resumen live */}
+              <div className="border rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-gray-50 border-b text-sm text-gray-700">
+                  Detectados ({Object.keys(scannedMap).length})
+                </div>
+                <div className="max-h-48 overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr className="text-left text-gray-800">
+                        <th className="px-3 py-2">EAN</th>
+                        <th className="px-3 py-2">Cant.</th>
+                        <th className="px-3 py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(scannedMap).map(([code, qty]) => (
+                        <tr key={code} className="border-t">
+                          <td className="px-3 py-2">{code}</td>
+                          <td className="px-3 py-2">{qty}</td>
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={() => loadScanToForm(code, qty)}
+                              className="text-xs px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                            >
+                              Usar en formulario
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {Object.keys(scannedMap).length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
+                            Acercá un código al recuadro para empezar.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-3 py-2 bg-gray-50 border-t flex items-center justify-between">
+                  <div className="text-xs text-gray-600">
+                    Nota: se usa *debounce* por código para evitar duplicados.
+                  </div>
+                  <button
+                    onClick={clearScans}
+                    className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
