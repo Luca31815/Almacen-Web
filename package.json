@@ -12,6 +12,7 @@
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
     "@supabase/supabase-js": "^2.53.0",
+    "@vercel/speed-insights": "^2.0.0",
     "@zxing/browser": "^0.1.5",
     "lucide-react": "0.541.0",
     "pdfjs-dist": "^5.4.54",

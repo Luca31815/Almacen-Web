@@ -8,6 +8,7 @@ import { supabase } from "./supabase";
 import { Link } from "react-router-dom";
 import { useToast } from "./ToastProvider";
 import Tesseract from "tesseract.js";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 export default function Ventas() {
   const toast = useToast();
@@ -1174,10 +1175,206 @@ export default function Ventas() {
                   Se usa *debounce* por código para evitar duplicados. Si no lee, probá “Forzar ZXing” u “OCR número”.
                 </div>
               </div>
+                    <tr key={code} className="border-t">
+                      <td className="px-3 py-2 text-gray-800">{code}</td>
+                      <td className="px-3 py-2 text-gray-800">{qty}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => loadScanToForm(code, qty)}
+                          className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          title="Cargar este EAN al formulario"
+                        >
+                          Usar en formulario
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {Object.keys(scannedMap).length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
+                        Sin códigos.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Modal de cámara */}
+      {scanOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={closeScanner} />
+          <div className="relative bg-white w-[95%] max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="p-3 border-b flex items-center justify-between">
+              <div className="font-semibold text-gray-800">
+                Escanear códigos {usingZxing ? "(ZXing)" : detectorSupported ? "(nativo)" : ""}
+              </div>
+              <div className="flex gap-2 items-center">
+                {/* Zoom digital (sólo detector nativo) */}
+                {!usingZxing && detectorSupported && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Zoom</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="2.4"
+                      step="0.1"
+                      value={digitalZoom}
+                      onChange={(e) => setDigitalZoom(parseFloat(e.target.value))}
+                    />
+                    <span className="text-xs text-gray-600">{digitalZoom.toFixed(1)}×</span>
+                  </div>
+                )}
+                {/* Zoom hardware */}
+                {hasHwZoom && (
+                  <>
+                    <button
+                      onClick={() => changeHwZoom(-0.5)}
+                      className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                      title="Zoom − (hardware)"
+                    >
+                      −
+                    </button>
+                    <button
+                      onClick={() => changeHwZoom(+0.5)}
+                      className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                      title="Zoom + (hardware)"
+                    >
+                      +
+                    </button>
+                  </>
+                )}
+                {hasTorch && (
+                  <button
+                    onClick={toggleTorch}
+                    className={`text-xs px-2 py-1 rounded ${
+                      torchOn ? "bg-amber-500 text-white" : "bg-gray-200 text-gray-800 hover:bg-gray-300"
+                    }`}
+                    title="Linterna"
+                  >
+                    {torchOn ? "Linterna ON" : "Linterna OFF"}
+                  </button>
+                )}
+                {/* Forzar modos */}
+                {!usingZxing ? (
+                  <button
+                    onClick={forceZxing}
+                    className="text-xs px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700"
+                    title="Forzar modo ZXing (más agresivo)"
+                  >
+                    Forzar ZXing
+                  </button>
+                ) : (
+                  <button
+                    onClick={forceNative}
+                    className="text-xs px-2 py-1 rounded bg-slate-600 text-white hover:bg-slate-700"
+                    title="Volver a modo nativo"
+                  >
+                    Modo nativo
+                  </button>
+                )}
+                <button
+                  onClick={pauseResume}
+                  className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                >
+                  {isScanning ? "Pausar" : "Reanudar"}
+                </button>
+                <button onClick={closeScanner} className="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300">
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-3 space-y-3">
+              {!window.isSecureContext && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                  Sugerencia: abrí la app en HTTPS o localhost para máxima compatibilidad.
+                </div>
+              )}
+
+              <div className="relative rounded-lg overflow-hidden bg-black">
+                <video
+                  ref={videoRef}
+                  className="w-full h-auto max-h-[55vh] object-contain"
+                  playsInline
+                  muted
+                />
+                <div className="pointer-events-none absolute inset-0 border-2 border-emerald-400/60 rounded-lg" />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={ocrDigitsFromFrame}
+                  className="text-xs px-3 py-1 rounded bg-orange-600 text-white hover:bg-orange-700"
+                  title="Leer el número impreso (OCR)"
+                >
+                  OCR número
+                </button>
+                <button
+                  onClick={clearScans}
+                  className="text-xs px-3 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                >
+                  Limpiar
+                </button>
+              </div>
+
+              <div className="text-xs text-gray-600">
+                Tips: acercá el código hasta que ocupe ~60–80% del marco; incliná un poquito; probá linterna y zoom.
+              </div>
+
+              {/* Resumen live */}
+              <div className="border rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-gray-50 border-b text-sm text-gray-700">
+                  Detectados ({Object.keys(scannedMap).length})
+                </div>
+                <div className="max-h-48 overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr className="text-left text-gray-800">
+                        <th className="px-3 py-2">EAN</th>
+                        <th className="px-3 py-2">Cant.</th>
+                        <th className="px-3 py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(scannedMap).map(([code, qty]) => (
+                        <tr key={code} className="border-t">
+                          <td className="px-3 py-2">{code}</td>
+                          <td className="px-3 py-2">{qty}</td>
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={() => loadScanToForm(code, qty)}
+                              className="text-xs px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                            >
+                              Usar en formulario
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {Object.keys(scannedMap).length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-3 py-6 text-center text-gray-500">
+                            Acercá un código al recuadro para empezar.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-3 py-2 bg-gray-50 border-t text-xs text-gray-600">
+                  Se usa *debounce* por código para evitar duplicados. Si no lee, probá “Forzar ZXing” u “OCR número”.
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
+      <SpeedInsights />
     </div>
   );
 }
