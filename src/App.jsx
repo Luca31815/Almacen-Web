@@ -81,9 +81,9 @@ export default function App() {
             <Route path="/*" element={<Navigate to="/login" />} />
           </Routes>
         ) : (
-          <div className="min-h-screen bg-gray-100 p-[20px]">
-            {/* Header */}
-            <div className="flex justify-end mb-2 relative">
+          <div className="min-h-screen bg-gray-100 pt-[70px] px-[20px] pb-[20px]">
+            {/* Header / Barra Superior Fija */}
+            <header className="fixed top-0 left-0 right-0 h-[60px] flex items-center justify-end px-6 z-[100] backdrop-blur-md bg-white/70 border-b border-gray-200/50 shadow-sm">
               <button
                 ref={userBtnRef}
                 onClick={() => setOpenUserMenu((v) => !v)}
@@ -101,9 +101,9 @@ export default function App() {
                 <div
                   ref={userMenuRef}
                   id="user-menu"
-                  className="absolute top-12 right-0 w-56 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50"
+                  className="absolute top-14 right-0 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 flex flex-col max-h-[calc(100vh-100px)]"
                 >
-                  <div className="px-4 py-3 border-b border-gray-100">
+                  <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50 shrink-0">
                     <p className="text-sm text-gray-500">Sesión iniciada como</p>
                     <p className="text-sm font-medium text-gray-700 truncate">
                       {profile?.first_name
@@ -111,7 +111,7 @@ export default function App() {
                         : user?.email}
                     </p>
                   </div>
-                  <nav className="py-1 text-sm text-gray-700">
+                  <nav className="py-1 text-sm text-gray-700 overflow-y-auto">
                     <Link
                       to="/perfil"
                       onClick={() => setOpenUserMenu(false)}
@@ -135,7 +135,7 @@ export default function App() {
                   </nav>
                 </div>
               )}
-            </div>
+            </header>
 
             <Routes>
               {!almacenId ? (
